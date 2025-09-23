@@ -12,7 +12,7 @@ import re
 COLLATED_DIR = "./collated"
 INTERVENTIONS_FILE = "./interventions/interventions.json"
 FEEDBACK_FILE = "./interventions/feedback.json"  # New separate feedback file
-INTERVAL = 65  # seconds
+INTERVAL = 30  # seconds
 
 # Global variables for pause functionality
 pause_until = None  # Timestamp when pause should end
@@ -22,7 +22,7 @@ pause_reason = None  # Reason for pause
 INTERVENTION_SERVER_URL = "http://10.1.45.59:8001/interventions"
 TIMEOUT = 30
 
-time.sleep(60)
+time.sleep(35)
 
 # Logger setup
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(message)s")
