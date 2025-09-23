@@ -5,10 +5,12 @@ from datetime import datetime
 import signal
 
 # Configuration
+base_dir = os.path.dirname(os.path.abspath(__file__))
 SCREENSHOT_FILE = "./screenshot/combined_captions.json"
 WATCH_FILE = "./watch/watch_data.json"
 INTERVENTIONS_FILE = "./interventions/interventions.json"
-COLLATED_DIR = "./collated"
+COLLATED_DIR = os.path.join(base_dir, "..", "collated")
+os.makedirs(COLLATED_DIR, exist_ok=True)
 INTERVAL = 30  # seconds
 RUNNING = True
 
