@@ -5,14 +5,18 @@ import requests
 from datetime import datetime
 import logging
 from dotenv import load_dotenv
-# from plyer import notification
 import subprocess
 import re
 
 # Configuration
 COLLATED_DIR = "./collated"
 INTERVENTIONS_FILE = "./interventions/interventions.json"
+FEEDBACK_FILE = "./interventions/feedback.json"  # New separate feedback file
 INTERVAL = 65  # seconds
+
+# Global variables for pause functionality
+pause_until = None  # Timestamp when pause should end
+pause_reason = None  # Reason for pause
 
 # Import configuration (if available)
 INTERVENTION_SERVER_URL = "http://10.1.45.59:8001/interventions"
@@ -28,6 +32,97 @@ logger = logging.getLogger("interventions")
 load_dotenv()
 
 
+def parse_duration_minutes(text):
+    """Extract duration in minutes from text like '5 minutes', '10 min', etc."""
+    if not text:
+        return None
+    
+    # Look for patterns like "5 minutes", "10 min", "15 mins", "2-3 minutes", etc.
+    patterns = [
+        r'(\d+)\s*(?:minute|min)s?',  # "5 minutes", "10 min"
+        r'(\d+)-\d+\s*(?:minute|min)s?',  # "2-3 minutes" - take first number
+        r'(\d+)\s*(?:hr|hour)s?\s*(?:and\s*)?(\d+)?\s*(?:minute|min)s?',  # "1 hour 30 minutes"
+    ]
+    
+    for pattern in patterns:
+        matches = re.findall(pattern, text.lower())
+        if matches:
+            if isinstance(matches[0], tuple):
+                # Handle hour + minutes pattern
+                hours = int(matches[0][0]) if matches[0][0] else 0
+                minutes = int(matches[0][1]) if matches[0][1] else 0
+                return hours * 60 + minutes
+            else:
+                return int(matches[0])
+    
+    return None
+
+
+def play_chime():
+    """Play a system chime sound."""
+    try:
+        # For macOS, use afplay with system sound
+        subprocess.run(['afplay', '/System/Library/Sounds/Glass.aiff'], check=False)
+        time.sleep(0.5)
+        subprocess.run(['afplay', '/System/Library/Sounds/Glass.aiff'], check=False)
+        logger.info("Played chime - break period ended")
+    except Exception as e:
+        logger.error(f"Failed to play chime: {e}")
+
+
+def check_for_off_screen_intervention(intervention_text, duration_text):
+    """Check if intervention requires user to be off-screen and extract duration."""
+    if not intervention_text:
+        return False, None
+    
+    # Keywords that indicate off-screen interventions
+    off_screen_keywords = [
+        'take a break', 'step away', 'get up', 'walk around', 
+        'leave your desk', 'stretch', 'rest your eyes',
+        'take some time away', 'pause your work', 'brief break'
+    ]
+    
+    intervention_lower = intervention_text.lower()
+    is_off_screen = any(keyword in intervention_lower for keyword in off_screen_keywords)
+    
+    if is_off_screen and duration_text:
+        duration_minutes = parse_duration_minutes(duration_text)
+        return True, duration_minutes
+    
+    return False, None
+
+
+def set_monitoring_pause(duration_minutes, reason):
+    """Set a pause for monitoring for the specified duration."""
+    global pause_until, pause_reason
+    
+    if duration_minutes and duration_minutes > 0:
+        pause_until = datetime.now().timestamp() + (duration_minutes * 60)
+        pause_reason = reason
+        logger.info(f"Monitoring paused for {duration_minutes} minutes. Reason: {reason}")
+        return True
+    return False
+
+
+def is_monitoring_paused():
+    """Check if monitoring is currently paused."""
+    global pause_until, pause_reason
+    
+    if pause_until is None:
+        return False
+    
+    current_time = datetime.now().timestamp()
+    if current_time >= pause_until:
+        # Pause period has ended
+        logger.info(f"Monitoring pause ended. Previous reason: {pause_reason}")
+        play_chime()  # Play chime when break ends
+        pause_until = None
+        pause_reason = None
+        return False
+    
+    return True
+
+
 def clear_interventions_file():
     """Clear the interventions.json file at the start of each run."""
     try:
@@ -37,6 +132,17 @@ def clear_interventions_file():
         logger.info("Cleared interventions.json file")
     except Exception as e:
         logger.error(f"Error clearing interventions.json file: {e}")
+
+
+def clear_feedback_file():
+    """Clear the feedback.json file at the start of each run."""
+    try:
+        os.makedirs(os.path.dirname(FEEDBACK_FILE), exist_ok=True)
+        with open(FEEDBACK_FILE, "w") as f:
+            json.dump([], f, indent=2)
+        logger.info("Cleared feedback.json file")
+    except Exception as e:
+        logger.error(f"Error clearing feedback.json file: {e}")
 
 
 def load_task_details():
@@ -130,7 +236,20 @@ def load_latest_collated_file():
         return None
 
 
-import json
+def load_previous_feedback():
+    """Load previous feedback data for context."""
+    try:
+        if os.path.exists(FEEDBACK_FILE):
+            with open(FEEDBACK_FILE, "r") as f:
+                feedback_data = json.load(f)
+                logger.info(f"Loaded {len(feedback_data)} previous feedback entries")
+                return feedback_data
+        else:
+            logger.info("No previous feedback file found")
+            return []
+    except Exception as e:
+        logger.error(f"Error loading feedback file: {e}")
+        return []
 
 
 def simplify_data_for_api(data):
@@ -189,7 +308,25 @@ def simplify_data_for_api(data):
                 "elapsed_time_seconds": feedback_data.get("elapsedTime", 0),
             }
 
-        # Interventions
+        # Load previous feedback for context (instead of from intervention_data)
+        previous_feedback = load_previous_feedback()
+        if previous_feedback:
+            if "previous_interventions" not in result:
+                result["previous_interventions"] = []
+            
+            # Convert feedback entries to the format expected by the API
+            for feedback_entry in previous_feedback:
+                result["previous_interventions"].append({
+                    "timestamp": feedback_entry.get("intervention_timestamp"),
+                    "was_distracted": feedback_entry.get("was_distracted", "UNKNOWN"),
+                    "distraction_type": feedback_entry.get("distraction_type", ""),
+                    "intervention_given": feedback_entry.get("intervention_text", "FALSE"),
+                    "intervention_scale": feedback_entry.get("intervention_scale", ""),
+                    "confidence": feedback_entry.get("confidence", ""),
+                    "user_feedback": feedback_entry.get("user_feedback", "no_feedback"),
+                })
+
+        # Still process intervention_data if it exists (for backwards compatibility)
         if intervention_data:
             if "previous_interventions" not in result:
                 result["previous_interventions"] = []
@@ -203,6 +340,7 @@ def simplify_data_for_api(data):
                         "intervention_given": structured.get("intervention", "FALSE"),
                         "intervention_scale": structured.get("intervention_scale", ""),
                         "confidence": structured.get("confidence", ""),
+                        "user_feedback": "no_feedback",  # Legacy data has no feedback
                     }
                 )
 
@@ -290,8 +428,33 @@ def analyze_distraction(data):
 
     task_description = task_details.get("taskDescription", "general work task")
     participant_id = task_details.get("participantId", "Unknown")
+    system_type = task_details.get("systemType", "system2")  # Default to system2 if not specified
 
-    # Prepare the payload for the intervention server
+    print(f"Task: {task_category}, desc: {task_description}, system: {system_type}")
+
+    # If System 1 (control), skip server analysis and return mock analysis
+    if system_type == "system1":
+        logger.info("System 1 (control) mode - skipping server analysis")
+        return {
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "participant_id": participant_id,
+            "task_category": task_category,
+            "task_description": task_description,
+            "raw_analysis": "*Distracted: NO (Control Group - No Analysis)\n**Confidence: N/A\n**Distraction Type: N/A\n**Detailed Reasoning: Control group participant - monitoring only, no interventions provided.\n**Intervention: FALSE\n**Intervention Scale: FALSE\n*Duration: FALSE",
+            "structured_analysis": {
+                "distracted": False,
+                "confidence": "N/A",
+                "distraction_type": "N/A",
+                "detailed_reasoning": "Control group participant - monitoring only, no interventions provided.",
+                "intervention": "FALSE",
+                "intervention_scale": "FALSE",
+                "duration": "FALSE"
+            },
+            "api_response": "control_group",
+            "server_used": "none",
+        }
+
+    # Prepare the payload for the intervention server (System 2 only)
     simplified_data = simplify_data_for_api(data)
 
     payload = {
@@ -302,8 +465,6 @@ def analyze_distraction(data):
         "user_feedback": simplified_data.get("user_feedback"),
         "previous_interventions": simplified_data.get("previous_interventions", []),
     }
-
-    print(f"Task: {task_category}, desc: {task_description}")
 
     try:
         response = requests.post(
@@ -343,6 +504,9 @@ def analyze_distraction(data):
             )
             return {
                 "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "participant_id": participant_id,
+                "task_category": task_category,
+                "task_description": task_description,
                 "error": f"Intervention server request failed: {response.status_code}",
                 "api_response": "error",
             }
@@ -351,6 +515,9 @@ def analyze_distraction(data):
         logger.error(f"Error connecting to intervention server: {e}")
         return {
             "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "participant_id": participant_id,
+            "task_category": task_category,
+            "task_description": task_description,
             "error": f"Error connecting to intervention server: {e}",
             "api_response": "error",
         }
@@ -358,36 +525,96 @@ def analyze_distraction(data):
         logger.error(f"Unexpected error in intervention analysis: {e}")
         return {
             "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "participant_id": participant_id,
+            "task_category": task_category,
+            "task_description": task_description,
             "error": f"Unexpected error: {e}",
             "api_response": "error",
         }
 
 
-# Client no longer performs OpenAI analysis or fallback; server owns prompts and analysis.
-
 def show_intervention_popup(intervention):
-    """Display a macOS system notification with the intervention text using osascript."""
+    """Display intervention dialog and return user feedback."""
     try:
-        subprocess.run([
-            "osascript", "-e",
-            f'display notification "{intervention}" with title "Intervention Required"'
-        ])
-        logger.info("Displayed intervention notification")
+        # Show only the feedback dialog - no notification
+        applescript = f'''
+        set userChoice to button returned of (display alert "💡 Intervention" ¬
+            message "{intervention}" & return & return & "Was this helpful?" ¬
+            buttons {{"👎 Not Helpful", "👍 Helpful"}} ¬
+            default button "👍 Helpful" ¬
+            as informational)
+        return userChoice
+        '''
+        
+        result = subprocess.run([
+            "osascript", "-e", applescript
+        ], capture_output=True, text=True, timeout=120)  # Increased timeout since no auto-dismiss
+        
+        feedback = result.stdout.strip()
+        
+        # Map feedback to standardized values
+        if feedback == "👍 Helpful":
+            mapped_feedback = "helpful"
+            logger.info(f"User marked intervention as helpful: {intervention}")
+        elif feedback == "👎 Not Helpful":
+            mapped_feedback = "not_helpful"
+            logger.info(f"User marked intervention as not helpful: {intervention}")
+        else:
+            mapped_feedback = "unknown"
+            logger.info(f"Unknown feedback '{feedback}' for intervention: {intervention}")
+        
+        return mapped_feedback
+        
+    except subprocess.TimeoutExpired:
+        logger.info(f"User feedback timeout (process) for intervention: {intervention}")
+        return "timeout"
     except Exception as e:
-        logger.error(f"Error displaying intervention notification: {e}")
+        logger.error(f"Error displaying intervention dialog: {e}")
+        return "error"
 
-# def show_intervention_popup(intervention):
-#     """Display a system notification with the intervention text."""
-#     try:
-#         notification.notify(
-#             title="Intervention Required",
-#             message=intervention,
-#             app_name="Distraction Analysis",
-#             timeout=10,  # Notification will disappear after 10 seconds
-#         )
-#         logger.info("Displayed intervention notification")
-#     except Exception as e:
-#         logger.error(f"Error displaying intervention notification: {e}")
+
+def save_feedback_to_file(intervention_data, user_feedback):
+    """Save user feedback to the separate feedback.json file."""
+    try:
+        # Load existing feedback data
+        if os.path.exists(FEEDBACK_FILE):
+            with open(FEEDBACK_FILE, "r") as f:
+                feedback_entries = json.load(f)
+        else:
+            feedback_entries = []
+
+        # Create feedback entry
+        structured_analysis = intervention_data.get("structured_analysis", {})
+        feedback_entry = {
+            "feedback_id": f"fb_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{len(feedback_entries)}",
+            "intervention_timestamp": intervention_data.get("timestamp"),
+            "participant_id": intervention_data.get("participant_id"),
+            "task_category": intervention_data.get("task_category"),
+            "task_description": intervention_data.get("task_description"),
+            "intervention_text": structured_analysis.get("intervention", "FALSE"),
+            "intervention_scale": structured_analysis.get("intervention_scale", ""),
+            "was_distracted": structured_analysis.get("distracted", False),
+            "distraction_type": structured_analysis.get("distraction_type", ""),
+            "confidence": structured_analysis.get("confidence", ""),
+            "detailed_reasoning": structured_analysis.get("detailed_reasoning", ""),
+            "user_feedback": user_feedback,
+            "feedback_timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "server_used": intervention_data.get("server_used", "unknown"),
+            "api_response": intervention_data.get("api_response", "unknown")
+        }
+
+        # Append to feedback entries
+        feedback_entries.append(feedback_entry)
+
+        # Save to file
+        os.makedirs(os.path.dirname(FEEDBACK_FILE), exist_ok=True)
+        with open(FEEDBACK_FILE, "w") as f:
+            json.dump(feedback_entries, f, indent=2)
+
+        logger.info(f"Saved feedback entry to {FEEDBACK_FILE}: {feedback_entry['feedback_id']}")
+
+    except Exception as e:
+        logger.error(f"Error saving feedback to file: {e}")
 
 
 def append_to_interventions_file(data):
@@ -402,15 +629,41 @@ def append_to_interventions_file(data):
 
         interventions.append(data)
 
+        # Save intervention data to interventions.json (without user feedback)
         with open(INTERVENTIONS_FILE, "w") as f:
             json.dump(interventions, f, indent=2)
 
         logger.info("Appended analysis result to interventions.json")
 
-        # Show popup if intervention is not FALSE
+        # Get system type from task details, not from intervention data
+        task_details = load_task_details()
+        system_type = task_details.get("systemType", "system2")
         intervention = data["structured_analysis"].get("intervention", "FALSE")
-        if intervention != "FALSE":
-            show_intervention_popup(intervention)
+        if intervention != "FALSE" and system_type == "system2":
+            # Check if this is an off-screen intervention with duration
+            duration_text = data["structured_analysis"].get("duration", "")
+            is_off_screen, duration_minutes = check_for_off_screen_intervention(intervention, duration_text)
+            
+            user_feedback = show_intervention_popup(intervention)
+            
+            # If it's an off-screen intervention with duration, set monitoring pause
+            if is_off_screen and duration_minutes:
+                pause_set = set_monitoring_pause(duration_minutes, f"Off-screen intervention: {intervention}")
+                if pause_set:
+                    logger.info(f"Set monitoring pause for {duration_minutes} minutes due to off-screen intervention")
+            
+            # Save feedback to separate feedback.json file
+            save_feedback_to_file(data, user_feedback)
+            
+            logger.info(f"Saved user feedback '{user_feedback}' for intervention: {intervention}")
+        elif system_type == "system1":
+            # Control group - no intervention shown, save to feedback file for completeness
+            save_feedback_to_file(data, "control_group_no_intervention")
+            logger.info("System 1 (control) - intervention popup suppressed")
+        else:
+            # No intervention shown, still save to feedback file for completeness
+            save_feedback_to_file(data, "no_intervention")
+            
     except Exception as e:
         logger.error(f"Error appending to interventions file: {e}")
 
@@ -418,21 +671,29 @@ def append_to_interventions_file(data):
 def main():
     print("Starting distraction analysis service...")
     print(f"Monitoring collated files in: {COLLATED_DIR}")
-    print(f"Results will be saved to: {INTERVENTIONS_FILE}")
+    print(f"Interventions will be saved to: {INTERVENTIONS_FILE}")
+    print(f"Feedback will be saved to: {FEEDBACK_FILE}")
     print(f"Analysis interval: {INTERVAL} seconds")
     print("Press Ctrl+C to stop.\n")
 
-    # Clear interventions.json at the start
+    # Clear both files at the start
     clear_interventions_file()
+    clear_feedback_file()
 
     while True:
+        # Check if monitoring is paused
+        if is_monitoring_paused():
+            logger.info(f"Monitoring paused: {pause_reason}. Skipping data collection.")
+            time.sleep(INTERVAL)
+            continue
+        
         # Load the latest collated file
         collated_data = load_latest_collated_file()
         if collated_data:
             # Analyze the data
             analysis_result = analyze_distraction(collated_data)
 
-            # Append the result to interventions.json
+            # Append the result to interventions.json and handle feedback
             append_to_interventions_file(analysis_result)
 
         # Wait for the next interval

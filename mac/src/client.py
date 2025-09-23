@@ -14,6 +14,8 @@ SAVE_DIR = "./screenshot"
 CAPTION_FILE = os.path.join(SAVE_DIR, "combined_captions.json")
 os.makedirs(SAVE_DIR, exist_ok=True)
 
+cap = cv2.VideoCapture(0)
+
 # Clear existing screenshots folder
 if os.path.exists(SAVE_DIR):
     for file in os.listdir(SAVE_DIR):
@@ -44,9 +46,9 @@ def capture_screenshot():
 
 
 def capture_webcam():
-    cap = cv2.VideoCapture(0)
+    if not cap.isOpened():
+        return None
     ret, frame = cap.read()
-    cap.release()
     if not ret:
         return None
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -55,7 +57,6 @@ def capture_webcam():
     with open(img_path, "rb") as f:
         b64 = base64.b64encode(f.read()).decode("utf-8")
     return b64
-
 
 def send_images():
     # Capture both images first
@@ -86,6 +87,7 @@ if __name__ == "__main__":
             send_images()
             time.sleep(10)  # capture every 10 seconds
     except KeyboardInterrupt:
+        cap.release()
         print("\nStopped.")
 
 # --------------------------------------------------------------------------------------------------------------

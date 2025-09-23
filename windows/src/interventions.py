@@ -5,13 +5,19 @@ import requests
 from datetime import datetime
 import logging
 from dotenv import load_dotenv
-from plyer import notification
 import re
+import ctypes
+import platform
+import threading
 
 # Configuration
 COLLATED_DIR = "./collated"
 INTERVENTIONS_FILE = "./interventions/interventions.json"
 INTERVAL = 65  # seconds
+
+# Global variables for pause functionality
+pause_until = None  # Timestamp when pause should end
+pause_reason = None  # Reason for pause
 
 # Import configuration (if available)
 INTERVENTION_SERVER_URL = "http://10.1.45.59:8001/interventions"
@@ -25,6 +31,97 @@ logger = logging.getLogger("interventions")
 
 # Load environment variables from .env file
 load_dotenv()
+
+
+def parse_duration_minutes(text):
+    """Extract duration in minutes from text like '5 minutes', '10 min', etc."""
+    if not text:
+        return None
+    
+    # Look for patterns like "5 minutes", "10 min", "15 mins", "2-3 minutes", etc.
+    patterns = [
+        r'(\d+)\s*(?:minute|min)s?',  # "5 minutes", "10 min"
+        r'(\d+)-\d+\s*(?:minute|min)s?',  # "2-3 minutes" - take first number
+        r'(\d+)\s*(?:hr|hour)s?\s*(?:and\s*)?(\d+)?\s*(?:minute|min)s?',  # "1 hour 30 minutes"
+    ]
+    
+    for pattern in patterns:
+        matches = re.findall(pattern, text.lower())
+        if matches:
+            if isinstance(matches[0], tuple):
+                # Handle hour + minutes pattern
+                hours = int(matches[0][0]) if matches[0][0] else 0
+                minutes = int(matches[0][1]) if matches[0][1] else 0
+                return hours * 60 + minutes
+            else:
+                return int(matches[0])
+    
+    return None
+
+
+def play_chime():
+    """Play a system chime sound."""
+    try:
+        # Play Windows system sound
+        ctypes.windll.user32.MessageBeep(0x40)  # MB_ICONASTERISK - pleasant chime
+        time.sleep(0.2)
+        ctypes.windll.user32.MessageBeep(0x40)  # Play twice for emphasis
+        logger.info("Played chime - break period ended")
+    except Exception as e:
+        logger.error(f"Failed to play chime: {e}")
+
+
+def check_for_off_screen_intervention(intervention_text, duration_text):
+    """Check if intervention requires user to be off-screen and extract duration."""
+    if not intervention_text:
+        return False, None
+    
+    # Keywords that indicate off-screen interventions
+    off_screen_keywords = [
+        'take a break', 'step away', 'get up', 'walk around', 
+        'leave your desk', 'stretch', 'rest your eyes',
+        'take some time away', 'pause your work', 'brief break'
+    ]
+    
+    intervention_lower = intervention_text.lower()
+    is_off_screen = any(keyword in intervention_lower for keyword in off_screen_keywords)
+    
+    if is_off_screen and duration_text:
+        duration_minutes = parse_duration_minutes(duration_text)
+        return True, duration_minutes
+    
+    return False, None
+
+
+def set_monitoring_pause(duration_minutes, reason):
+    """Set a pause for monitoring for the specified duration."""
+    global pause_until, pause_reason
+    
+    if duration_minutes and duration_minutes > 0:
+        pause_until = datetime.now().timestamp() + (duration_minutes * 60)
+        pause_reason = reason
+        logger.info(f"Monitoring paused for {duration_minutes} minutes. Reason: {reason}")
+        return True
+    return False
+
+
+def is_monitoring_paused():
+    """Check if monitoring is currently paused."""
+    global pause_until, pause_reason
+    
+    if pause_until is None:
+        return False
+    
+    current_time = datetime.now().timestamp()
+    if current_time >= pause_until:
+        # Pause period has ended
+        logger.info(f"Monitoring pause ended. Previous reason: {pause_reason}")
+        play_chime()  # Play chime when break ends
+        pause_until = None
+        pause_reason = None
+        return False
+    
+    return True
 
 
 def clear_interventions_file():
@@ -208,6 +305,8 @@ def simplify_data_for_api(data):
     return result
 
 
+import re
+
 def parse_analysis_response(response_text: str) -> dict:
     """Parse the response text into a structured format.
     Works with or without markdown-style **key** formatting."""
@@ -235,6 +334,9 @@ def parse_analysis_response(response_text: str) -> dict:
             r"(?:\*\*)?Intervention Scale(?:\*\*)?: (Easy|Medium|Low|High|FALSE)",
             response_text,
             re.I,
+        )
+        duration_match = re.search(
+            r"(?:\*\*)?Duration(?:\*\*)?: (.+)", response_text, re.I
         )
 
         structured_analysis = {
@@ -266,9 +368,15 @@ def parse_analysis_response(response_text: str) -> dict:
                 if intervention_scale_match
                 else "FALSE"
             ),
+            "duration": (
+                duration_match.group(1).strip() if duration_match else "FALSE"
+            ),
         }
 
         return structured_analysis
+    except Exception:
+        return {"error": "parse_error"}
+
 
     except Exception as e:
         logger.error(f"Error parsing analysis response: {e}")
@@ -289,8 +397,33 @@ def analyze_distraction(data):
 
     task_description = task_details.get("taskDescription", "general work task")
     participant_id = task_details.get("participantId", "Unknown")
+    system_type = task_details.get("systemType", "system2")  # Default to system2 if not specified
 
-    # Prepare the payload for the intervention server
+    print(f"Task: {task_category}, desc: {task_description}, system: {system_type}")
+
+    # If System 1 (control), skip server analysis and return mock analysis
+    if system_type == "system1":
+        logger.info("System 1 (control) mode - skipping server analysis")
+        return {
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "participant_id": participant_id,
+            "task_category": task_category,
+            "task_description": task_description,
+            "raw_analysis": "*Distracted: NO (Control Group - No Analysis)\n**Confidence: N/A\n**Distraction Type: N/A\n**Detailed Reasoning: Control group participant - monitoring only, no interventions provided.\n**Intervention: FALSE\n**Intervention Scale: FALSE\n*Duration: FALSE",
+            "structured_analysis": {
+                "distracted": False,
+                "confidence": "N/A",
+                "distraction_type": "N/A",
+                "detailed_reasoning": "Control group participant - monitoring only, no interventions provided.",
+                "intervention": "FALSE",
+                "intervention_scale": "FALSE",
+                "duration": "FALSE"
+            },
+            "api_response": "control_group",
+            "server_used": "none",
+        }
+
+    # Prepare the payload for the intervention server (System 2 only)
     simplified_data = simplify_data_for_api(data)
 
     payload = {
@@ -301,8 +434,6 @@ def analyze_distraction(data):
         "user_feedback": simplified_data.get("user_feedback"),
         "previous_interventions": simplified_data.get("previous_interventions", []),
     }
-
-    print(f"Task: {task_category}, desc: {task_description}")
 
     try:
         response = requests.post(
@@ -326,6 +457,9 @@ def analyze_distraction(data):
                 analysis_text = result.get("analysis", str(result))
                 parsed_analysis = parse_analysis_response(analysis_text)
 
+            # Debug logging
+            logger.info(f"Server response analysis: distracted={parsed_analysis.get('distracted', 'unknown')}, intervention={parsed_analysis.get('intervention', 'unknown')}")
+
             return {
                 "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 "participant_id": participant_id,
@@ -342,6 +476,9 @@ def analyze_distraction(data):
             )
             return {
                 "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "participant_id": participant_id,
+                "task_category": task_category,
+                "task_description": task_description,
                 "error": f"Intervention server request failed: {response.status_code}",
                 "api_response": "error",
             }
@@ -350,6 +487,9 @@ def analyze_distraction(data):
         logger.error(f"Error connecting to intervention server: {e}")
         return {
             "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "participant_id": participant_id,
+            "task_category": task_category,
+            "task_description": task_description,
             "error": f"Error connecting to intervention server: {e}",
             "api_response": "error",
         }
@@ -357,6 +497,9 @@ def analyze_distraction(data):
         logger.error(f"Unexpected error in intervention analysis: {e}")
         return {
             "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "participant_id": participant_id,
+            "task_category": task_category,
+            "task_description": task_description,
             "error": f"Unexpected error: {e}",
             "api_response": "error",
         }
@@ -366,17 +509,98 @@ def analyze_distraction(data):
 
 
 def show_intervention_popup(intervention):
-    """Display a system notification with the intervention text."""
+    """Display a reliable Windows MessageBox with sound and forced foreground."""
     try:
-        notification.notify(
-            title="Intervention Required",
-            message=intervention,
-            app_name="Distraction Analysis",
-            timeout=10,  # Notification will disappear after 10 seconds
+        # Use Windows MessageBox API directly for maximum reliability
+        import ctypes
+        from ctypes import wintypes
+        
+        # Play system sound first to get attention
+        try:
+            # Play the Windows "Critical Stop" sound
+            ctypes.windll.user32.MessageBeep(0x10)  # MB_ICONHAND sound
+            time.sleep(0.1)  # Brief pause
+            # Play it again for emphasis
+            ctypes.windll.user32.MessageBeep(0x10)
+        except:
+            pass  # If sound fails, continue anyway
+        
+        # Force the current process to foreground first
+        try:
+            # Get current process window
+            kernel32 = ctypes.windll.kernel32
+            user32 = ctypes.windll.user32
+            
+            # Get current thread and process IDs
+            current_thread_id = kernel32.GetCurrentThreadId()
+            current_process_id = kernel32.GetCurrentProcessId()
+            
+            # Try to force foreground
+            user32.SetForegroundWindow(user32.GetDesktopWindow())
+            user32.AllowSetForegroundWindow(current_process_id)
+            
+        except:
+            pass  # If foreground forcing fails, continue anyway
+        
+        # Define MessageBox constants
+        MB_YESNO = 0x4
+        MB_ICONQUESTION = 0x20
+        MB_TOPMOST = 0x40000
+        MB_SETFOREGROUND = 0x10000
+        MB_SYSTEMMODAL = 0x1000  # System modal - blocks everything
+        
+        # Combine flags for maximum visibility
+        flags = MB_YESNO | MB_ICONQUESTION | MB_TOPMOST | MB_SETFOREGROUND | MB_SYSTEMMODAL
+        
+        # Prepare the message
+        title = "🚨 URGENT: Workplace Distraction Alert 🚨"
+        message = f"⚠️ ATTENTION REQUIRED ⚠️\n\nINTERVENTION:\n{intervention}\n\nWas this intervention helpful?\n\n✅ Click YES if helpful\n❌ Click NO if not helpful"
+        
+        # Flash the screen to get attention
+        try:
+            ctypes.windll.user32.FlashWindow(user32.GetDesktopWindow(), True)
+        except:
+            pass
+        
+        # Call Windows MessageBox API
+        result = ctypes.windll.user32.MessageBoxW(
+            0,  # Parent window handle (0 = no parent)
+            message,
+            title,
+            flags
         )
-        logger.info("Displayed intervention notification")
+        
+        # MessageBox returns 6 for Yes, 7 for No
+        if result == 6:  # IDYES
+            feedback = "helpful"
+        elif result == 7:  # IDNO
+            feedback = "not_helpful"
+        else:
+            feedback = "no_response"
+        
+        logger.info(f"Intervention popup completed with feedback: {feedback}")
+        return feedback
+        
     except Exception as e:
-        logger.error(f"Error displaying intervention notification: {e}")
+        logger.error(f"Error displaying Windows MessageBox: {e}")
+        
+        # Fallback to simple print statement and auto-response
+        try:
+            print(f"\n{'='*60}")
+            print(f"🚨 WORKPLACE DISTRACTION ALERT 🚨")
+            print(f"{'='*60}")
+            print(f"INTERVENTION: {intervention}")
+            print(f"{'='*60}")
+            print("Note: Popup failed, automatically marking as 'helpful' for data collection")
+            print(f"{'='*60}\n")
+            
+            # Auto-respond as helpful to keep data collection going
+            logger.info("Popup failed, auto-responding as 'helpful'")
+            return "helpful"
+            
+        except Exception as e2:
+            logger.error(f"Even fallback print failed: {e2}")
+            return "error"
 
 
 def append_to_interventions_file(data):
@@ -396,10 +620,48 @@ def append_to_interventions_file(data):
 
         logger.info("Appended analysis result to interventions.json")
 
-        # Show popup if intervention is not FALSE
+        # Show popup if distracted is True and system is system2
+        # Load system type from task details since we removed it from intervention data
+        task_details = load_task_details()
+        system_type = task_details.get("systemType", "system2")
         intervention = data["structured_analysis"].get("intervention", "FALSE")
-        if intervention != "FALSE":
-            show_intervention_popup(intervention)
+        distracted = data["structured_analysis"].get("distracted", False)
+        
+        logger.info(f"Checking intervention popup conditions: system_type={system_type}, distracted={distracted}, intervention={intervention}")
+        
+        # Show popup if either distracted is True OR intervention is not FALSE, and system is system2
+        should_show_popup = (distracted == True or intervention != "FALSE") and system_type == "system2"
+        
+        if should_show_popup:
+            # Use intervention text if available, otherwise create a generic distraction message
+            popup_message = intervention if intervention != "FALSE" else "You appear to be distracted. Please refocus on your task."
+            logger.info(f"Showing intervention popup for: {popup_message}")
+            
+            # Check if this is an off-screen intervention with duration
+            duration_text = data["structured_analysis"].get("duration", "")
+            is_off_screen, duration_minutes = check_for_off_screen_intervention(intervention, duration_text)
+            
+            user_feedback = show_intervention_popup(popup_message)
+            
+            # If it's an off-screen intervention with duration, set monitoring pause
+            if is_off_screen and duration_minutes:
+                pause_set = set_monitoring_pause(duration_minutes, f"Off-screen intervention: {intervention}")
+                if pause_set:
+                    logger.info(f"Set monitoring pause for {duration_minutes} minutes due to off-screen intervention")
+            
+            # Add user feedback to the data
+            data["user_feedback"] = user_feedback
+            
+            # Re-save the updated data with user feedback
+            interventions[-1] = data  # Update the last entry with feedback
+            with open(INTERVENTIONS_FILE, "w") as f:
+                json.dump(interventions, f, indent=2)
+            
+            logger.info(f"Added user feedback '{user_feedback}' to interventions.json")
+        elif system_type == "system1":
+            logger.info("System 1 (control) - intervention popup suppressed")
+        else:
+            logger.info(f"No intervention popup needed - distracted={distracted}, intervention={intervention}, system_type={system_type}")
     except Exception as e:
         logger.error(f"Error appending to interventions file: {e}")
 
@@ -415,6 +677,12 @@ def main():
     clear_interventions_file()
 
     while True:
+        # Check if monitoring is paused
+        if is_monitoring_paused():
+            logger.info(f"Monitoring paused: {pause_reason}. Skipping data collection.")
+            time.sleep(INTERVAL)
+            continue
+        
         # Load the latest collated file
         collated_data = load_latest_collated_file()
         if collated_data:

@@ -13,6 +13,7 @@ SERVER_URL = "http://10.1.45.59:8001/caption"
 SAVE_DIR = "./screenshot"
 CAPTION_FILE = os.path.join(SAVE_DIR, "combined_captions.json")
 os.makedirs(SAVE_DIR, exist_ok=True)
+cap = cv2.VideoCapture(0)
 
 # Clear existing screenshots folder
 if os.path.exists(SAVE_DIR):
@@ -44,9 +45,9 @@ def capture_screenshot():
 
 
 def capture_webcam():
-    cap = cv2.VideoCapture(0)
+    if not cap.isOpened():
+        return None
     ret, frame = cap.read()
-    cap.release()
     if not ret:
         return None
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -86,6 +87,7 @@ if __name__ == "__main__":
             send_images()
             time.sleep(10)  # capture every 10 seconds
     except KeyboardInterrupt:
+        cap.release()
         print("\nStopped.")
 
 # --------------------------------------------------------------------------------------------------------------

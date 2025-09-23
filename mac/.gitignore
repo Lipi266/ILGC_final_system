@@ -2,16 +2,19 @@ ilgc-venv2
 /CombinedShots
 combined_captions.json
 activitywatch-install
-*.json
-/watch
+# *.json
+src/watch
 /screenshot
 /feedback
 /details
-/interventions
-/collated
+src/interventions
+interventions
+src/collated
 .env
 *.jpg
 *.png
+
+/collated
 
 # Logs
 logs

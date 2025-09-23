@@ -19,6 +19,7 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { useToast } from "@/hooks/use-toast";
 import { apiService } from "@/services/api";
 
@@ -32,6 +33,7 @@ const TaskForm = () => {
     category: [] as string[], // Changed to array for multiple selections
     taskDescription: "",
     estimatedTime: "",
+    systemType: "",
   });
 
   const handleInputChange = (field: string, value: string) => {
@@ -57,7 +59,8 @@ const TaskForm = () => {
       !formData.batch ||
       formData.category.length === 0 || // Changed to check array length
       !formData.taskDescription ||
-      !formData.estimatedTime
+      !formData.estimatedTime ||
+      !formData.systemType
     ) {
       toast({
         title: "Please fill in all fields",
@@ -180,6 +183,45 @@ const TaskForm = () => {
                   <SelectItem value="UG29">UG29</SelectItem>
                 </SelectContent>
               </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label className="text-sm font-medium text-text-primary">
+                System Type
+              </Label>
+              <RadioGroup
+                value={formData.systemType}
+                onValueChange={(value) =>
+                  handleInputChange("systemType", value)
+                }
+                className="space-y-2"
+              >
+                <div className="flex items-center space-x-2">
+                  <RadioGroupItem value="system1" id="system1" />
+                  <Label
+                    htmlFor="system1"
+                    className="text-sm font-normal cursor-pointer"
+                  >
+                    System 1
+                  </Label>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <RadioGroupItem value="system2" id="system2" />
+                  <Label
+                    htmlFor="system2"
+                    className="text-sm font-normal cursor-pointer"
+                  >
+                    System 2
+                  </Label>
+                </div>
+              </RadioGroup>
+              <p className="text-xs text-muted-foreground">
+                {formData.systemType === "system1"
+                  ? "You've chosen System 1"
+                  : formData.systemType === "system2"
+                  ? "You've chose System 2"
+                  : "Please select the system type for this session."}
+              </p>
             </div>
 
             <div className="space-y-2">

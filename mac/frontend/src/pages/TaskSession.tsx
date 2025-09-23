@@ -8,16 +8,12 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import {
   Clock,
   User,
   Tag,
   FileText,
-  ThumbsUp,
-  ThumbsDown,
-  MessageSquare,
 } from "lucide-react";
 import { apiService } from "@/services/api";
 
@@ -27,8 +23,6 @@ const TaskSession = () => {
   const [taskData, setTaskData] = useState<any>(null);
   const [elapsedTime, setElapsedTime] = useState(0);
   const [isEndingSession, setIsEndingSession] = useState(false);
-  const [feedbackText, setFeedbackText] = useState("");
-  const [isSubmittingFeedback, setIsSubmittingFeedback] = useState(false);
 
   useEffect(() => {
     // Get task data from localStorage
@@ -63,46 +57,6 @@ const TaskSession = () => {
         .padStart(2, "0")}`;
     }
     return `${minutes}:${remainingSeconds.toString().padStart(2, "0")}`;
-  };
-
-  const handleFeedback = async (type: "positive" | "negative") => {
-    if (!taskData || isSubmittingFeedback) return;
-
-    setIsSubmittingFeedback(true);
-
-    try {
-      const feedbackData = {
-        participantId: taskData.participantId,
-        batch: taskData.batch,
-        category: taskData.category,
-        feedbackType: type,
-        feedbackText: feedbackText.trim(),
-        timestamp: new Date().toISOString(),
-        elapsedTime: elapsedTime,
-        sessionStartTime: taskData.startTime,
-      };
-
-      const result = await apiService.saveFeedback(feedbackData);
-
-      toast({
-        title: "Feedback submitted",
-        description: `${
-          type === "positive" ? "Positive" : "Negative"
-        } feedback recorded successfully`,
-      });
-
-      // Clear the feedback text after submission
-      setFeedbackText("");
-    } catch (error) {
-      console.error("Failed to save feedback:", error);
-      toast({
-        title: "Failed to save feedback",
-        description: "Please try again",
-        variant: "destructive",
-      });
-    } finally {
-      setIsSubmittingFeedback(false);
-    }
   };
 
   const handleEndSession = async () => {
@@ -234,53 +188,6 @@ const TaskSession = () => {
               <p className="font-medium text-text-primary">
                 {taskData.estimatedTime} minutes
               </p>
-            </div>
-          </div>
-
-          {/* Feedback Section */}
-          <div className="p-4 bg-muted rounded-lg border border-border/50">
-            <h3 className="font-medium text-text-primary mb-3 flex items-center space-x-2">
-              <MessageSquare className="w-4 h-4" />
-              <span>Real-time Feedback</span>
-            </h3>
-
-            <div className="space-y-3">
-              <Textarea
-                value={feedbackText}
-                onChange={(e) => setFeedbackText(e.target.value)}
-                placeholder="Optional: Share your thoughts about the current task or experience..."
-                className="min-h-[80px] resize-none"
-              />
-
-              <div className="flex space-x-3">
-                <Button
-                  onClick={() => handleFeedback("positive")}
-                  disabled={isSubmittingFeedback}
-                  variant="outline"
-                  size="sm"
-                  className="flex items-center space-x-2 text-green-600 border-green-200 hover:bg-green-50"
-                >
-                  <ThumbsUp className="w-4 h-4" />
-                  <span>Positive</span>
-                </Button>
-
-                <Button
-                  onClick={() => handleFeedback("negative")}
-                  disabled={isSubmittingFeedback}
-                  variant="outline"
-                  size="sm"
-                  className="flex items-center space-x-2 text-red-600 border-red-200 hover:bg-red-50"
-                >
-                  <ThumbsDown className="w-4 h-4" />
-                  <span>Negative</span>
-                </Button>
-              </div>
-
-              {isSubmittingFeedback && (
-                <p className="text-xs text-text-secondary">
-                  Submitting feedback...
-                </p>
-              )}
             </div>
           </div>
 

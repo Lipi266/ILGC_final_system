@@ -75,6 +75,7 @@ def save_task_details():
             'taskDescription': data.get('taskDescription'),
             'name': data.get('name'),
             'estimatedTime': data.get('estimatedTime'),
+            'systemType': data.get('systemType', 'system2'),  # Default to system2 for backward compatibility
             'timestamp': datetime.now().isoformat(),
             'startTime': data.get('startTime')
         }
