@@ -72,22 +72,11 @@ def play_chime():
 
 def check_for_off_screen_intervention(intervention_text, duration_text):
     """Check if intervention requires user to be off-screen and extract duration."""
-    if not intervention_text:
-        return False, None
-    
-    # Keywords that indicate off-screen interventions
-    off_screen_keywords = [
-        'take a break', 'step away', 'get up', 'walk around', 
-        'leave your desk', 'stretch', 'rest your eyes',
-        'take some time away', 'pause your work', 'brief break'
-    ]
-    
-    intervention_lower = intervention_text.lower()
-    is_off_screen = any(keyword in intervention_lower for keyword in off_screen_keywords)
-    
-    if is_off_screen and duration_text:
+    # Only check the duration text - if it contains a valid duration, it's an off-screen intervention
+    if duration_text:
         duration_minutes = parse_duration_minutes(duration_text)
-        return True, duration_minutes
+        if duration_minutes and duration_minutes > 0:
+            return True, duration_minutes
     
     return False, None
 
