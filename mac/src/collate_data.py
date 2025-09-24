@@ -11,7 +11,7 @@ WATCH_FILE = "./watch/watch_data.json"
 INTERVENTIONS_FILE = "./interventions/interventions.json"
 COLLATED_DIR = os.path.join(base_dir, "..", "collated")
 os.makedirs(COLLATED_DIR, exist_ok=True)
-INTERVAL = 30  # seconds
+INTERVAL = 60  # seconds
 RUNNING = True
 
 def stop(*_):
@@ -57,12 +57,12 @@ def load_intervention_data():
         if not isinstance(interventions, list) or len(interventions) == 0:
             return []
         
-        # If only 1 intervention exists, return it
-        if len(interventions) == 1:
+        # If only 1-3 interventions exist, return all of them
+        if len(interventions) <= 3:
             return interventions
         
-        # If 2 or more exist, return the last 2
-        return interventions[-2:]
+        # If 4 or more exist, return the last 4
+        return interventions[-4:]
         
     except Exception as e:
         print(f"Error loading intervention data: {e}")

@@ -13,7 +13,7 @@ import threading
 # Configuration
 COLLATED_DIR = "./collated"
 INTERVENTIONS_FILE = "./interventions/interventions.json"
-INTERVAL = 30  # seconds
+INTERVAL = 60  # seconds
 
 # Global variables for pause functionality
 pause_until = None  # Timestamp when pause should end
@@ -23,7 +23,7 @@ pause_reason = None  # Reason for pause
 INTERVENTION_SERVER_URL = "http://10.1.45.59:8001/interventions"
 TIMEOUT = 30
 
-time.sleep(35)
+time.sleep(60)
 
 # Logger setup
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(message)s")
@@ -111,6 +111,40 @@ def is_monitoring_paused():
         return False
     
     return True
+
+
+def create_pause_entry():
+    """Create a mock intervention entry during monitoring pause periods."""
+    task_details = load_task_details()
+    
+    # Handle category as either string (legacy) or array (new multiple selection)
+    category_data = task_details.get("category", "general work")
+    if isinstance(category_data, list):
+        task_category = " and ".join(category_data) if category_data else "general work"
+    else:
+        task_category = category_data
+
+    task_description = task_details.get("taskDescription", "general work task")
+    participant_id = task_details.get("participantId", "Unknown")
+    
+    return {
+        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "participant_id": participant_id,
+        "task_category": task_category,
+        "task_description": task_description,
+        "raw_analysis": "**Distracted: NO (Off-screen break period)\n**Confidence: N/A\n**Distraction Type: N/A\n**Detailed Reasoning: User is on scheduled off-screen break - monitoring paused.\n**Intervention: FALSE\n**Intervention Scale: FALSE\n**Duration: FALSE",
+        "structured_analysis": {
+            "distracted": False,
+            "confidence": "N/A",
+            "distraction_type": "N/A", 
+            "detailed_reasoning": "User is on scheduled off-screen break - monitoring paused.",
+            "intervention": "FALSE",
+            "intervention_scale": "FALSE",
+            "duration": "FALSE"
+        },
+        "api_response": "pause_period",
+        "server_used": "none",
+    }
 
 
 def clear_interventions_file():
@@ -646,11 +680,19 @@ def main():
 
     # Clear interventions.json at the start
     clear_interventions_file()
+    
+    # Load system type from task details
+    task_details = load_task_details()
+    system_type = task_details.get("systemType", "system2")  # Default to system2 if not specified
+    logger.info(f"System type loaded: {system_type}")
 
     while True:
         # Check if monitoring is paused
         if is_monitoring_paused():
-            logger.info(f"Monitoring paused: {pause_reason}. Skipping data collection.")
+            logger.info(f"Monitoring paused: {pause_reason}. Adding pause entry.")
+            # Create and add a pause entry with distracted=False
+            pause_entry = create_pause_entry()
+            append_to_interventions_file(pause_entry, system_type)
             time.sleep(INTERVAL)
             continue
         
@@ -661,7 +703,7 @@ def main():
             analysis_result = analyze_distraction(collated_data)
 
             # Append the result to interventions.json
-            append_to_interventions_file(analysis_result)
+            append_to_interventions_file(analysis_result, system_type)
 
         # Wait for the next interval
         time.sleep(INTERVAL)
