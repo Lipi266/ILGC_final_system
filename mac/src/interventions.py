@@ -22,7 +22,7 @@ pause_reason = None  # Reason for pause
 INTERVENTION_SERVER_URL = "http://10.1.45.59:8001/interventions"
 TIMEOUT = 30
 
-time.sleep()
+time.sleep(60)
 
 # Logger setup
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(message)s")
