@@ -421,29 +421,7 @@ def analyze_distraction(data):
 
     print(f"Task: {task_category}, desc: {task_description}, system: {system_type}")
 
-    # If System 1 (control), skip server analysis and return mock analysis
-    if system_type == "system1":
-        logger.info("System 1 (control) mode - skipping server analysis")
-        return {
-            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "participant_id": participant_id,
-            "task_category": task_category,
-            "task_description": task_description,
-            "raw_analysis": "*Distracted: NO (Control Group - No Analysis)\n**Confidence: N/A\n**Distraction Type: N/A\n**Detailed Reasoning: Control group participant - monitoring only, no interventions provided.\n**Intervention: FALSE\n**Intervention Scale: FALSE\n*Duration: FALSE",
-            "structured_analysis": {
-                "distracted": False,
-                "confidence": "N/A",
-                "distraction_type": "N/A",
-                "detailed_reasoning": "Control group participant - monitoring only, no interventions provided.",
-                "intervention": "FALSE",
-                "intervention_scale": "FALSE",
-                "duration": "FALSE"
-            },
-            "api_response": "control_group",
-            "server_used": "none",
-        }
-
-    # Prepare the payload for the intervention server (System 2 only)
+    # Prepare the payload for the intervention server (both System 1 and System 2)
     simplified_data = simplify_data_for_api(data)
 
     payload = {
@@ -628,30 +606,48 @@ def append_to_interventions_file(data):
         task_details = load_task_details()
         system_type = task_details.get("systemType", "system2")
         intervention = data["structured_analysis"].get("intervention", "FALSE")
-        if intervention != "FALSE" and system_type == "system2":
-            # Check if this is an off-screen intervention with duration
-            duration_text = data["structured_analysis"].get("duration", "")
-            is_off_screen, duration_minutes = check_for_off_screen_intervention(intervention, duration_text)
+        distracted = data["structured_analysis"].get("distracted", False)
+        
+        logger.info(f"Checking intervention popup conditions: system_type={system_type}, distracted={distracted}, intervention={intervention}")
+        
+        # Show popup and pause monitoring only for System2
+        if system_type == "system2":
+            # Show popup if either distracted is True OR intervention is not FALSE
+            should_show_popup = (distracted == True or intervention != "FALSE")
             
-            user_feedback = show_intervention_popup(intervention)
-            
-            # If it's an off-screen intervention with duration, set monitoring pause
-            if is_off_screen and duration_minutes:
-                pause_set = set_monitoring_pause(duration_minutes, f"Off-screen intervention: {intervention}")
-                if pause_set:
-                    logger.info(f"Set monitoring pause for {duration_minutes} minutes due to off-screen intervention")
-            
-            # Save feedback to separate feedback.json file
-            save_feedback_to_file(data, user_feedback)
-            
-            logger.info(f"Saved user feedback '{user_feedback}' for intervention: {intervention}")
+            if should_show_popup:
+                # Use intervention text if available, otherwise create a generic distraction message
+                popup_message = intervention if intervention != "FALSE" else "You appear to be distracted. Please refocus on your task."
+                logger.info(f"Showing intervention popup for: {popup_message}")
+                
+                # Check if this is an off-screen intervention with duration
+                duration_text = data["structured_analysis"].get("duration", "")
+                is_off_screen, duration_minutes = check_for_off_screen_intervention(intervention, duration_text)
+                
+                user_feedback = show_intervention_popup(popup_message)
+                
+                # If it's an off-screen intervention with duration, set monitoring pause
+                if is_off_screen and duration_minutes:
+                    pause_set = set_monitoring_pause(duration_minutes, f"Off-screen intervention: {intervention}")
+                    if pause_set:
+                        logger.info(f"Set monitoring pause for {duration_minutes} minutes due to off-screen intervention")
+                
+                # Save feedback to separate feedback.json file
+                save_feedback_to_file(data, user_feedback)
+                
+                logger.info(f"Saved user feedback '{user_feedback}' for intervention: {intervention}")
+            else:
+                # No intervention shown, still save to feedback file for completeness
+                save_feedback_to_file(data, "no_intervention")
+                logger.info(f"No intervention popup needed - distracted={distracted}, intervention={intervention}")
         elif system_type == "system1":
             # Control group - no intervention shown, save to feedback file for completeness
             save_feedback_to_file(data, "control_group_no_intervention")
-            logger.info("System 1 (control) - intervention popup suppressed")
+            logger.info("System 1 (control) - data collected and saved, but intervention popup suppressed")
         else:
-            # No intervention shown, still save to feedback file for completeness
+            # Unknown system type - no intervention shown, still save to feedback file for completeness
             save_feedback_to_file(data, "no_intervention")
+            logger.info(f"Unknown system type: {system_type}")
             
     except Exception as e:
         logger.error(f"Error appending to interventions file: {e}")
