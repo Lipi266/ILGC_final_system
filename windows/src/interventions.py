@@ -692,7 +692,7 @@ def main():
             logger.info(f"Monitoring paused: {pause_reason}. Adding pause entry.")
             # Create and add a pause entry with distracted=False
             pause_entry = create_pause_entry()
-            append_to_interventions_file(pause_entry, system_type)
+            append_to_interventions_file(pause_entry)
             time.sleep(INTERVAL)
             continue
         
@@ -702,8 +702,7 @@ def main():
             # Analyze the data
             analysis_result = analyze_distraction(collated_data)
 
-            # Append the result to interventions.json
-            append_to_interventions_file(analysis_result, system_type)
+            append_to_interventions_file(analysis_result)
 
         # Wait for the next interval
         time.sleep(INTERVAL)
