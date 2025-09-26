@@ -1,36 +1,107 @@
-# Setup Instructions
+# ILGC Workplace and Distraction
 
-## Installation
+## Prerequisites
 
-1. Install Python dependencies:
+- Python 3.8 or higher  
+- Node.js and npm  
+- Camera permissions enabled    
 
-```bash
-pip install -r requirements.txt
-```
+## Setup Instructions
 
-2. Install frontend dependencies:
+### Windows
 
-```bash
-cd frontend
-npm install
-```
+1. **Create virtual environment:**
+   ```bash
+   cd windows
+   python3 -m venv .ilgc
+   source .ilgc/bin/activate
+   ```
 
-## Running the Application
+2. **Install dependencies:**
+   ```bash
+   pip install -r requirements.txt
+   ```
 
-1. Start the Flask API server (in the root directory):
+3. **Grant camera permissions:**
+   * Settings > Privacy & Security > Camera
+   * Enable camera access for your terminal/command prompt
 
-```bash
-python api_server.py
-```
+4. **Start backend services (open 4 terminals, all with venv activated):**
+   ```bash
+   # Terminal 1
+   python3 api_server.py
 
-2. Start the React frontend (in a new terminal):
+   # Terminal 2
+   cd src
+   python3 watch.py
 
-```bash
-cd frontend
-npm run dev
-```
+   # Terminal 3
+   cd src
+   python3 client.py
 
-3. Open your browser and go to the URL shown by Vite (usually http://localhost:8080/ilgcresearch/)
+   # Terminal 4
+   cd src
+   python3 collate_data.py
+   ```
+
+5. **Start frontend:**
+   ```bash
+   cd frontend
+   npm install
+   npm run dev
+   ```
+
+6. **Open in browser:** Go to the URL shown by Vite (usually `http://localhost:8080/ilgcresearch/`).
+
+### Mac
+
+1. **Create virtual environment:**
+   ```bash
+   cd Mac
+   python3 -m venv .ilgc
+   source .ilgc/bin/activate
+   ```
+
+2. **Install dependencies & configure pylsl:**
+   ```bash
+   pip install -r requirements.txt
+   cp -r lib/pylsl/* .ilgc/lib/python3.13/site-packages/pylsl/lib
+   ```
+
+3. **Grant permissions:**
+   * **Camera:** System Preferences > Security & Privacy > Camera
+   * **Notifications (for interventions):** Test with:
+   ```bash
+   osascript -e 'display notification "Keep up the good work!" with title "ILGC Research"'
+   ```
+
+4. **Start backend services (open 4 terminals, all with venv activated):**
+   ```bash
+   # Terminal 1
+   python3 api_server.py
+
+   # Terminal 2
+   cd src
+   python3 watch.py
+
+   # Terminal 3
+   cd src
+   python3 client.py
+
+   # Terminal 4
+   cd src
+   python3 collate_data.py
+   ```
+
+5. **Start frontend:**
+   ```bash
+   cd frontend
+   npm install
+   npm run dev
+   ```
+
+6. **Open in browser:** Go to the URL shown by Vite (usually `http://localhost:8080/ilgcresearch/`).
+
 
 ## How it Works
 
@@ -42,9 +113,19 @@ npm run dev
 
 The system will now monitor for distractions based on the specific task you've defined!
 
+
 ## API Endpoints
 
-- `POST /api/save-task-details` - Save task details and start interventions
-- `POST /api/stop-interventions` - Stop the interventions process
-- `GET /api/status` - Get current monitoring status
-- `GET /api/get-task-details` - Get current task details
+* `POST /api/save-task-details` → Save task details & start interventions
+* `POST /api/stop-interventions` → Stop interventions
+* `GET /api/status` → Get monitoring status
+* `GET /api/get-task-details` → Get current task details
+
+
+
+## Troubleshooting
+
+**Mac – Interventions:**
+* Allow Script Editor in Notifications settings 
+* Ensure `/usr/bin/osascript` has Accessibility settings (Privacy & Security) permissions
+
