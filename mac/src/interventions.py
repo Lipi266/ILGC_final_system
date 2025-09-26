@@ -513,22 +513,20 @@ def analyze_distraction(data):
 def show_intervention_popup(intervention):
     """Display intervention dialog and return user feedback."""
     try:
-        # Show only the feedback dialog - no notification
+        # Show feedback dialog using display dialog instead of display alert
         applescript = f'''
-set userChoice to button returned of (display alert "💡 Intervention" ¬
-    message "{intervention}" & return & return & "Was this helpful?" ¬
+set userChoice to button returned of (display dialog "🚨 Intervention" & return & return & "{intervention}" & return & return & "Was this helpful?" ¬
     buttons {{"👎 Not Helpful", "👍 Helpful"}} ¬
     default button "👍 Helpful" ¬
-    as informational)
+    with icon note)
 return userChoice
 '''
-
         result = subprocess.run([
             "osascript", "-e", applescript
-        ], capture_output=True, text=True, timeout=120)  # Increased timeout since no auto-dismiss
-
+        ], capture_output=True, text=True, timeout=120)
+        
         feedback = result.stdout.strip()
-
+        
         # Map feedback to standardized values
         if feedback == "👍 Helpful":
             mapped_feedback = "helpful"
@@ -539,9 +537,9 @@ return userChoice
         else:
             mapped_feedback = "unknown"
             logger.info(f"Unknown feedback '{feedback}' for intervention: {intervention}")
-
+        
         return mapped_feedback
-
+        
     except subprocess.TimeoutExpired:
         logger.info(f"User feedback timeout (process) for intervention: {intervention}")
         return "timeout"
