@@ -14,7 +14,7 @@
    ```bash
    cd windows
    python3 -m venv .ilgc
-   source .ilgc/bin/activate
+   source .ilgc/Scripts/activate
    ```
 
 2. **Install dependencies:**
