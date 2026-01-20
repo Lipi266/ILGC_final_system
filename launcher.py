@@ -119,6 +119,29 @@ def check_camera_permission():
 # PROCESS MANAGEMENT
 # ============================================================================
 
+def get_venv_python():
+    """Find the virtual environment Python executable."""
+    # Check if we're already in a venv
+    if hasattr(sys, 'real_prefix') or (hasattr(sys, 'base_prefix') and sys.base_prefix != sys.prefix):
+        return sys.executable  # Already in venv
+    
+    # Try to find the venv
+    venv_paths = [
+        OS_DIR / ".ilgc" / "bin" / "python",      # macOS/Linux
+        OS_DIR / ".ilgc" / "Scripts" / "python.exe",  # Windows
+        OS_DIR / ".ilgc" / "bin" / "python3",     # macOS/Linux alternative
+    ]
+    
+    for venv_python in venv_paths:
+        if venv_python.exists():
+            logger.info(f"Found venv Python at: {venv_python}")
+            return str(venv_python)
+    
+    # Fall back to current Python (will fail if deps not installed)
+    logger.warning("Virtual environment not found - using system Python")
+    return sys.executable
+
+
 class ServiceRunner:
     """Runs backend services - uses threads when frozen, subprocesses when not."""
     
@@ -129,6 +152,7 @@ class ServiceRunner:
         self.frontend_server = None
         self.frontend_thread = None
         self.stop_event = threading.Event()
+        self.python_executable = get_venv_python() if not IS_FROZEN else sys.executable
     
     def _run_script_as_module(self, name, script_path):
         """Import and run a Python script as a module in a thread."""
@@ -166,7 +190,7 @@ class ServiceRunner:
     
     def _run_script_as_subprocess(self, name, script_path):
         """Run a Python script as a subprocess."""
-        logger.info(f"Starting subprocess for {name}")
+        logger.info(f"Starting subprocess for {name} using {self.python_executable}")
         
         try:
             env = os.environ.copy()
@@ -176,8 +200,9 @@ class ServiceRunner:
                 if pylsl_lib.exists():
                     env['DYLD_LIBRARY_PATH'] = f"{pylsl_lib}:{env.get('DYLD_LIBRARY_PATH', '')}"
             
+            # Use venv Python and OS_DIR as working directory
             process = subprocess.Popen(
-                [sys.executable, str(script_path)],
+                [self.python_executable, str(script_path)],
                 cwd=str(OS_DIR),
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
@@ -340,6 +365,23 @@ def main():
     print("=" * 60)
     print(f"\nPlatform: {SYSTEM}")
     print(f"Mode: {'Bundled App' if IS_FROZEN else 'Development'}")
+    
+    # Check venv in development mode
+    if not IS_FROZEN:
+        venv_dir = OS_DIR / ".ilgc"
+        if not venv_dir.exists():
+            print(f"\n⚠️  ERROR: Virtual environment not found!")
+            print(f"   Expected at: {venv_dir}")
+            print("\n   Please set it up first:")
+            print(f"   cd {OS_DIR}")
+            print(f"   python3 -m venv .ilgc")
+            print(f"   source .ilgc/bin/activate  # or .ilgc\\Scripts\\activate on Windows")
+            print(f"   pip install -r requirements.txt")
+            return 1
+        
+        venv_python = get_venv_python()
+        print(f"Using Python: {venv_python}")
+    
     print(f"Working directory: {OS_DIR}")
     
     logger.info(f"Platform: {platform.platform()}")

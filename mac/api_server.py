@@ -25,8 +25,10 @@ def get_python_executable():
 
 def get_interventions_script_path():
     """Get the proper path to interventions.py script."""
-    # Use os.path.join for cross-platform path handling
-    return os.path.join(os.getcwd(), 'src', 'interventions.py')
+    # Use __file__ to find script relative to api_server.py location
+    # This works both when running as script and when bundled
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    return os.path.join(script_dir, 'src', 'interventions.py')
 
 def start_interventions_process():
     """Start the interventions.py process with cross-platform compatibility."""
@@ -34,21 +36,26 @@ def start_interventions_process():
         python_exec = get_python_executable()
         script_path = get_interventions_script_path()
         
+        # Get the script directory (where api_server.py is located)
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        
         # Verify the script exists
         if not os.path.exists(script_path):
             raise FileNotFoundError(f"interventions.py not found at {script_path}")
         
+        # Use script_dir as working directory so relative paths in interventions.py work
+        # But data files should go to cwd (which is DATA_DIR when bundled)
+        working_dir = os.getcwd()  # This is DATA_DIR when running bundled
+        
         # Start the process with proper cross-platform handling
         if platform.system() == "Windows":
-            # On Windows, we might need shell=True for some setups
             process = subprocess.Popen([
                 python_exec, script_path
-            ], cwd=os.getcwd(), shell=False)
+            ], cwd=working_dir, shell=False)
         else:
-            # On Unix-like systems (macOS, Linux)
             process = subprocess.Popen([
                 python_exec, script_path
-            ], cwd=os.getcwd())
+            ], cwd=working_dir)
         
         return process, None
         

@@ -5,11 +5,11 @@ from datetime import datetime
 import signal
 
 # Configuration
-base_dir = os.path.dirname(os.path.abspath(__file__))
+# Use current working directory for data files (this is DATA_DIR when bundled)
 SCREENSHOT_FILE = "./screenshot/combined_captions.json"
 WATCH_FILE = "./watch/watch_data.json"
 INTERVENTIONS_FILE = "./interventions/interventions.json"
-COLLATED_DIR = os.path.join(base_dir, "..", "collated")
+COLLATED_DIR = "./collated"
 os.makedirs(COLLATED_DIR, exist_ok=True)
 INTERVAL = 60  # seconds
 RUNNING = True
@@ -19,8 +19,15 @@ def stop(*_):
     print("\nStopping collation...")
     RUNNING = False
 
-signal.signal(signal.SIGINT, stop)
-signal.signal(signal.SIGTERM, stop)
+# Only register signal handlers if running in main thread
+try:
+    import threading
+    if threading.current_thread() is threading.main_thread():
+        signal.signal(signal.SIGINT, stop)
+        signal.signal(signal.SIGTERM, stop)
+except (ValueError, RuntimeError):
+    # Running in a thread - signal handlers not supported
+    pass
 
 def load_json_file(filepath):
     """Load JSON file safely, return empty dict if file doesn't exist or is invalid"""
