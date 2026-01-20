@@ -1,131 +1,144 @@
-# ILGC Workplace and Distraction
+# ILGC Workplace and Distraction Monitor
 
-## Prerequisites
+A comprehensive distraction detection and intervention system for workplace research.
 
-- Python 3.8 or higher  
-- Node.js and npm  
-- Camera permissions enabled    
+## Quick Install (Recommended)
 
-## Setup Instructions
+No programming experience required! Download the installer for your operating system and run.
+
+### Download
+
+| Platform | Download | Requirements |
+|----------|----------|--------------|
+| Windows | [Download Installer](https://github.com/youruser/ilgc/releases/latest/download/ILGC-Setup-Windows.exe) | Windows 10+ |
+| macOS | [Download DMG](https://github.com/youruser/ilgc/releases/latest/download/ILGC-Workplace.dmg) | macOS 10.15+ |
+
+[View all releases](https://github.com/youruser/ilgc/releases)
+
+### Installation Steps
+
+**Windows:**
+1. Download ILGC-Setup-Windows.exe
+2. Double-click to run the installer
+3. Follow the setup wizard
+4. Launch from the Start Menu or Desktop
+
+**macOS:**
+1. Download ILGC-Workplace.dmg
+2. Open the DMG file
+3. Drag the app to your Applications folder
+4. Launch from Applications
+
+### First Run
+
+1. Grant Camera Permission when prompted
+2. Grant Notification Permission (macOS)
+3. Connect Heart Rate Monitor (optional)
+4. Fill Out Form with participant details
+5. Click Start Task to begin
+
+---
+
+## For Developers
+
+### Prerequisites
+
+- Python 3.8 or higher
+- Node.js 18+ and npm
+- Camera permissions enabled
+- Git (for cloning)
+
+### Windows Setup
+
+```bash
+cd windows
+python -m venv .ilgc
+.ilgc\Scripts\activate
+pip install -r requirements.txt
+```
+
+Start 4 terminals with venv activated:
+- Terminal 1: `python api_server.py`
+- Terminal 2: `python src/watch.py`
+- Terminal 3: `python src/client.py`
+- Terminal 4: `python src/collate_data.py`
+
+Start frontend:
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+### macOS Setup
+
+```bash
+cd mac
+python3 -m venv .ilgc
+source .ilgc/bin/activate
+pip install -r requirements.txt
+cp -r lib/pylsl/* .ilgc/lib/python3.13/site-packages/pylsl/lib
+```
+
+Start 4 terminals with venv activated:
+- Terminal 1: `python api_server.py`
+- Terminal 2: `python src/watch.py`
+- Terminal 3: `python src/client.py`
+- Terminal 4: `python src/collate_data.py`
+
+Start frontend:
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+---
+
+## Building from Source
+
+### macOS
+```bash
+chmod +x build.sh
+./build.sh
+```
 
 ### Windows
+```cmd
+build.bat
+```
 
-1. **Create virtual environment:**
-   ```bash
-   cd windows
-   python3 -m venv .ilgc
-   source .ilgc/Scripts/activate
-   ```
-
-2. **Install dependencies:**
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-3. **Grant camera permissions:**
-   * Settings > Privacy & Security > Camera
-   * Enable camera access for your terminal/command prompt
-
-4. **Start backend services (open 4 terminals, all with venv activated):**
-   ```bash
-   # Terminal 1
-   python3 api_server.py
-
-   # Terminal 2
-   cd src
-   python3 watch.py
-
-   # Terminal 3
-   cd src
-   python3 client.py
-
-   # Terminal 4
-   cd src
-   python3 collate_data.py
-   ```
-
-5. **Start frontend:**
-   ```bash
-   cd frontend
-   npm install
-   npm run dev
-   ```
-
-6. **Open in browser:** Go to the URL shown by Vite (usually `http://localhost:8080/ilgcresearch/`).
-
-### Mac
-
-1. **Create virtual environment:**
-   ```bash
-   cd Mac
-   python3 -m venv .ilgc
-   source .ilgc/bin/activate
-   ```
-
-2. **Install dependencies & configure pylsl:**
-   ```bash
-   pip install -r requirements.txt
-   cp -r lib/pylsl/* .ilgc/lib/python3.13/site-packages/pylsl/lib
-   ```
-
-3. **Grant permissions:**
-   * **Camera:** System Preferences > Security & Privacy > Camera
-   * **Notifications (for interventions):** Test with:
-   ```bash
-   osascript -e 'display notification "Keep up the good work!" with title "ILGC Research"'
-   ```
-
-4. **Start backend services (open 4 terminals, all with venv activated):**
-   ```bash
-   # Terminal 1
-   python3 api_server.py
-
-   # Terminal 2
-   cd src
-   python3 watch.py
-
-   # Terminal 3
-   cd src
-   python3 client.py
-
-   # Terminal 4
-   cd src
-   python3 collate_data.py
-   ```
-
-5. **Start frontend:**
-   ```bash
-   cd frontend
-   npm install
-   npm run dev
-   ```
-
-6. **Open in browser:** Go to the URL shown by Vite (usually `http://localhost:8080/ilgcresearch/`).
-
+---
 
 ## How it Works
 
 1. Fill out the task form with participant details
-2. Click "Start Task" - this will:
-   - Save participant ID, batch, task category, and task description to `./details/task_details.json`
-   - Start the interventions.py script automatically
-   - The interventions script will load the task details and include them in the GPT analysis prompt
-
-The system will now monitor for distractions based on the specific task you've defined!
-
+2. Click Start Task to begin monitoring
+3. System monitors for distractions via screen content and HRV
+4. Interventions are delivered via notifications
 
 ## API Endpoints
 
-* `POST /api/save-task-details` → Save task details & start interventions
-* `POST /api/stop-interventions` → Stop interventions
-* `GET /api/status` → Get monitoring status
-* `GET /api/get-task-details` → Get current task details
-
-
+- POST /api/save-task-details - Save task details and start interventions
+- POST /api/stop-interventions - Stop interventions
+- POST /api/save-feedback - Save user feedback
+- POST /api/save-assessment - Save task assessment
+- GET /api/status - Get monitoring status
+- GET /api/health - Health check
 
 ## Troubleshooting
 
-**Mac – Interventions:**
-* Allow Script Editor in Notifications settings 
-* Ensure `/usr/bin/osascript` has Accessibility settings (Privacy & Security) permissions
+**Camera Not Working:**
+- Windows: Settings > Privacy > Camera > Enable
+- macOS: System Preferences > Privacy > Camera
 
+**Notifications Not Appearing (macOS):**
+- System Preferences > Notifications > Script Editor > Allow
+
+**Heart Rate Monitor Not Connecting:**
+- Ensure Bluetooth is enabled
+- Make sure hBand device is powered on
+
+## License
+
+MIT License

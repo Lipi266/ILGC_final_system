@@ -1,0 +1,335 @@
+# ============================================================================
+# ILGC Workplace Monitor - Build and Release Workflow
+# ============================================================================
+# This workflow automatically builds and releases the application for
+# Windows and macOS when a version tag is pushed.
+#
+# Usage:
+#   git tag v1.0.0
+#   git push origin v1.0.0
+# ============================================================================
+
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'  # Trigger on version tags (e.g., v1.0.0)
+
+  workflow_dispatch:  # Allow manual trigger
+    inputs:
+      version:
+        description: 'Version number (e.g., 1.0.0)'
+        required: true
+        default: '1.0.0'
+
+env:
+  APP_NAME: ILGC-Workplace
+  PYTHON_VERSION: '3.11'
+  NODE_VERSION: '18'
+
+jobs:
+  # ==========================================================================
+  # Build for Windows
+  # ==========================================================================
+  build-windows:
+    name: Build Windows
+    runs-on: windows-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+      
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: windows/frontend/package-lock.json
+      
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r windows/requirements.txt
+          pip install pyinstaller
+      
+      - name: Build Frontend
+        run: |
+          cd windows/frontend
+          npm install
+          npm run build
+      
+      - name: Build Executable with PyInstaller
+        run: |
+          pyinstaller ilgc_windows.spec --clean --noconfirm
+      
+      - name: Create resources directory
+        run: |
+          if (!(Test-Path "resources")) { New-Item -ItemType Directory -Path "resources" }
+        shell: pwsh
+      
+      - name: Download and Install Inno Setup
+        run: |
+          # Download Inno Setup
+          Invoke-WebRequest -Uri "https://jrsoftware.org/download.php/is.exe" -OutFile "innosetup.exe"
+          # Install silently
+          Start-Process -FilePath "innosetup.exe" -Args "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-" -Wait
+        shell: pwsh
+      
+      - name: Create Installer with Inno Setup
+        run: |
+          # Check if Inno Setup was installed
+          $isccPath = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          if (Test-Path $isccPath) {
+            & $isccPath "installer_windows.iss"
+          } else {
+            Write-Host "Inno Setup not found, creating zip instead"
+            Compress-Archive -Path "dist\${{ env.APP_NAME }}.exe" -DestinationPath "dist\${{ env.APP_NAME }}-Windows.zip"
+          }
+        shell: pwsh
+      
+      - name: Upload Windows Artifact (Installer)
+        uses: actions/upload-artifact@v4
+        with:
+          name: ILGC-Windows-Installer
+          path: Output/ILGC-Setup-Windows.exe
+          if-no-files-found: warn
+      
+      - name: Upload Windows Artifact (Executable)
+        uses: actions/upload-artifact@v4
+        with:
+          name: ILGC-Windows-Executable
+          path: dist/${{ env.APP_NAME }}.exe
+          if-no-files-found: error
+
+  # ==========================================================================
+  # Build for macOS
+  # ==========================================================================
+  build-macos:
+    name: Build macOS
+    runs-on: macos-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+      
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: mac/frontend/package-lock.json
+      
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r mac/requirements.txt
+          pip install pyinstaller
+      
+      - name: Setup pylsl library
+        run: |
+          # Copy pylsl libraries to site-packages
+          SITE_PACKAGES=$(python -c "import site; print(site.getsitepackages()[0])")
+          mkdir -p "$SITE_PACKAGES/pylsl/lib"
+          cp -r mac/lib/pylsl/* "$SITE_PACKAGES/pylsl/lib/" || true
+      
+      - name: Build Frontend
+        run: |
+          cd mac/frontend
+          npm install
+          npm run build
+      
+      - name: Build Executable with PyInstaller
+        run: |
+          pyinstaller ilgc_macos.spec --clean --noconfirm
+      
+      - name: Create DMG
+        run: |
+          # Install create-dmg
+          brew install create-dmg || true
+          
+          # Create DMG
+          if command -v create-dmg &> /dev/null; then
+            create-dmg \
+              --volname "${{ env.APP_NAME }}" \
+              --window-pos 200 120 \
+              --window-size 600 400 \
+              --icon-size 100 \
+              --icon "${{ env.APP_NAME }}.app" 175 175 \
+              --hide-extension "${{ env.APP_NAME }}.app" \
+              --app-drop-link 425 175 \
+              "dist/${{ env.APP_NAME }}.dmg" \
+              "dist/${{ env.APP_NAME }}.app" || \
+            hdiutil create -volname "${{ env.APP_NAME }}" -srcfolder "dist/${{ env.APP_NAME }}.app" -ov -format UDZO "dist/${{ env.APP_NAME }}.dmg"
+          else
+            hdiutil create -volname "${{ env.APP_NAME }}" -srcfolder "dist/${{ env.APP_NAME }}.app" -ov -format UDZO "dist/${{ env.APP_NAME }}.dmg"
+          fi
+      
+      - name: Upload macOS Artifact (DMG)
+        uses: actions/upload-artifact@v4
+        with:
+          name: ILGC-macOS-DMG
+          path: dist/${{ env.APP_NAME }}.dmg
+          if-no-files-found: error
+      
+      - name: Upload macOS Artifact (App Bundle)
+        uses: actions/upload-artifact@v4
+        with:
+          name: ILGC-macOS-App
+          path: dist/${{ env.APP_NAME }}.app
+          if-no-files-found: error
+
+  # ==========================================================================
+  # Create GitHub Release
+  # ==========================================================================
+  create-release:
+    name: Create Release
+    needs: [build-windows, build-macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Download Windows Installer
+        uses: actions/download-artifact@v4
+        with:
+          name: ILGC-Windows-Installer
+          path: ./release
+        continue-on-error: true
+      
+      - name: Download Windows Executable
+        uses: actions/download-artifact@v4
+        with:
+          name: ILGC-Windows-Executable
+          path: ./release
+      
+      - name: Download macOS DMG
+        uses: actions/download-artifact@v4
+        with:
+          name: ILGC-macOS-DMG
+          path: ./release
+      
+      - name: List release files
+        run: ls -la ./release/
+      
+      - name: Get version from tag
+        id: get_version
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            VERSION=${GITHUB_REF#refs/tags/}
+          else
+            VERSION="v${{ github.event.inputs.version }}"
+          fi
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+          echo "Version: $VERSION"
+      
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.get_version.outputs.VERSION }}
+          name: ILGC Workplace Monitor ${{ steps.get_version.outputs.VERSION }}
+          body: |
+            ## ILGC Workplace Monitor ${{ steps.get_version.outputs.VERSION }}
+            
+            ### Downloads
+            
+            | Platform | File | Description |
+            |----------|------|-------------|
+            | Windows | `ILGC-Setup-Windows.exe` | Windows installer (recommended) |
+            | Windows | `ILGC-Workplace.exe` | Standalone executable |
+            | macOS | `ILGC-Workplace.dmg` | macOS disk image |
+            
+            ### Installation
+            
+            **Windows:**
+            1. Download `ILGC-Setup-Windows.exe`
+            2. Run the installer
+            3. Follow the setup wizard
+            4. Launch from Start Menu or Desktop
+            
+            **macOS:**
+            1. Download `ILGC-Workplace.dmg`
+            2. Open the DMG file
+            3. Drag the app to Applications
+            4. Launch from Applications folder
+            
+            ### First Run
+            
+            1. Grant camera permission when prompted
+            2. Grant notification permission (macOS)
+            3. The app will open your browser automatically
+            4. Fill out the participant form to begin
+            
+            ### What's New
+            
+            - Single-click installation
+            - All dependencies bundled
+            - Automatic process management
+            - Auto-restart on crash
+            
+            ---
+            
+            For issues or feedback, please open a GitHub issue.
+          files: |
+            release/ILGC-Setup-Windows.exe
+            release/ILGC-Workplace.exe
+            release/ILGC-Workplace.dmg
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ==========================================================================
+  # Update Download Page (GitHub Pages)
+  # ==========================================================================
+  update-pages:
+    name: Update Download Page
+    needs: [create-release]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pages: write
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Get version from tag
+        id: get_version
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            VERSION=${GITHUB_REF#refs/tags/}
+          else
+            VERSION="v${{ github.event.inputs.version }}"
+          fi
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+      
+      - name: Update version in download page
+        run: |
+          # Update version in index.html if it exists
+          if [ -f "docs/index.html" ]; then
+            sed -i "s/{{VERSION}}/${{ steps.get_version.outputs.VERSION }}/g" docs/index.html
+          fi
+      
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./docs
+          keep_files: true
+        continue-on-error: true
