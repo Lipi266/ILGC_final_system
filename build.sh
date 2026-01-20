@@ -203,32 +203,46 @@ log_info "Creating DMG installer..."
 
 DMG_NAME="${APP_NAME}.dmg"
 DMG_PATH="$DIST_DIR/$DMG_NAME"
+DMG_STAGING="$DIST_DIR/dmg_staging"
 
-# Remove existing DMG
+# Remove existing DMG and staging
 rm -f "$DMG_PATH"
+rm -rf "$DMG_STAGING"
 
-# Check if create-dmg is available
+# Create staging directory with app and Applications symlink
+mkdir -p "$DMG_STAGING"
+cp -R "$DIST_DIR/$APP_NAME.app" "$DMG_STAGING/"
+ln -s /Applications "$DMG_STAGING/Applications"
+
+# Check if create-dmg is available (install it if not)
+if ! command -v create-dmg &> /dev/null; then
+    log_info "Installing create-dmg..."
+    brew install create-dmg || true
+fi
+
 if command -v create-dmg &> /dev/null; then
     create-dmg \
         --volname "$APP_NAME" \
-        --volicon "$PROJECT_ROOT/resources/icon.icns" 2>/dev/null \
         --window-pos 200 120 \
-        --window-size 600 400 \
+        --window-size 600 450 \
         --icon-size 100 \
-        --icon "$APP_NAME.app" 175 175 \
+        --icon "$APP_NAME.app" 150 200 \
         --hide-extension "$APP_NAME.app" \
-        --app-drop-link 425 175 \
+        --app-drop-link 450 200 \
+        --no-internet-enable \
         "$DMG_PATH" \
-        "$DIST_DIR/$APP_NAME.app" || {
-            # Fallback to hdiutil if create-dmg fails
+        "$DMG_STAGING" || {
             log_warning "create-dmg failed, using hdiutil..."
-            hdiutil create -volname "$APP_NAME" -srcfolder "$DIST_DIR/$APP_NAME.app" -ov -format UDZO "$DMG_PATH"
+            hdiutil create -volname "$APP_NAME" -srcfolder "$DMG_STAGING" -ov -format UDZO "$DMG_PATH"
         }
 else
-    # Use hdiutil as fallback
+    # Use hdiutil as fallback (still has Applications link from staging)
     log_warning "create-dmg not found, using hdiutil..."
-    hdiutil create -volname "$APP_NAME" -srcfolder "$DIST_DIR/$APP_NAME.app" -ov -format UDZO "$DMG_PATH"
+    hdiutil create -volname "$APP_NAME" -srcfolder "$DMG_STAGING" -ov -format UDZO "$DMG_PATH"
 fi
+
+# Cleanup staging
+rm -rf "$DMG_STAGING"
 
 log_success "DMG created: $DMG_PATH"
 

@@ -523,9 +523,22 @@
     </div>
 
     <script>
-        // Configuration - Update these URLs with your actual repository
-        const REPO_OWNER = 'youruser';
-        const REPO_NAME = 'ilgc';
+        // Configuration - Auto-detect from current URL or set manually
+        // If hosting on GitHub Pages, it will auto-detect. Otherwise, set these:
+        let REPO_OWNER = 'YOUR_USERNAME';  // <-- CHANGE THIS to your GitHub username
+        let REPO_NAME = 'ILGC_final_system';  // <-- CHANGE THIS to your repo name
+        
+        // Auto-detect from GitHub Pages URL if possible
+        const currentHost = window.location.hostname;
+        if (currentHost.endsWith('.github.io')) {
+            REPO_OWNER = currentHost.replace('.github.io', '');
+            // Repo name from path
+            const pathParts = window.location.pathname.split('/').filter(p => p);
+            if (pathParts.length > 0) {
+                REPO_NAME = pathParts[0];
+            }
+        }
+        
         const BASE_URL = `https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/latest/download`;
 
         // Detect operating system

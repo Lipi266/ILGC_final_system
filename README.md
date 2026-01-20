@@ -4,38 +4,38 @@ A comprehensive distraction detection and intervention system for workplace rese
 
 ## Quick Install (Recommended)
 
-No programming experience required! Download the installer for your operating system and run.
+No programming experience required! Download the installer for your operating system.
 
-### Download
+### Download Latest Version
 
 | Platform | Download | Requirements |
 |----------|----------|--------------|
-| Windows | [Download Installer](https://github.com/youruser/ilgc/releases/latest/download/ILGC-Setup-Windows.exe) | Windows 10+ |
-| macOS | [Download DMG](https://github.com/youruser/ilgc/releases/latest/download/ILGC-Workplace.dmg) | macOS 10.15+ |
+| **Windows** | [ILGC-Setup-Windows.exe](../../releases/latest/download/ILGC-Setup-Windows.exe) | Windows 10+ |
+| **macOS** | [ILGC-Workplace.dmg](../../releases/latest/download/ILGC-Workplace.dmg) | macOS 10.15+ |
 
-[View all releases](https://github.com/youruser/ilgc/releases)
+> **[View All Releases](../../releases)** - Download previous versions or standalone executables
 
-### Installation Steps
+### Installation
 
 **Windows:**
-1. Download ILGC-Setup-Windows.exe
+1. Download `ILGC-Setup-Windows.exe` from the link above
 2. Double-click to run the installer
 3. Follow the setup wizard
-4. Launch from the Start Menu or Desktop
+4. Launch from Start Menu or Desktop shortcut
 
 **macOS:**
-1. Download ILGC-Workplace.dmg
-2. Open the DMG file
-3. Drag the app to your Applications folder
-4. Launch from Applications
+1. Download `ILGC-Workplace.dmg` from the link above
+2. Double-click the DMG file to open it
+3. Drag the ILGC app to the Applications folder (shortcut shown in DMG)
+4. Open from Applications folder
+5. If blocked by Gatekeeper: Right-click the app > Open > Open
 
 ### First Run
 
-1. Grant Camera Permission when prompted
-2. Grant Notification Permission (macOS)
-3. Connect Heart Rate Monitor (optional)
-4. Fill Out Form with participant details
-5. Click Start Task to begin
+1. **Grant Camera Permission** when prompted
+2. **Connect Heart Rate Monitor** (optional) - Turn on your hBand
+3. **Fill Out the Form** with participant details
+4. **Click Start Task** to begin monitoring
 
 ---
 
@@ -43,70 +43,105 @@ No programming experience required! Download the installer for your operating sy
 
 ### Prerequisites
 
-- Python 3.8 or higher
+- Python 3.8+
 - Node.js 18+ and npm
-- Camera permissions enabled
-- Git (for cloning)
+- Git
 
-### Windows Setup
+### Quick Start (Run from Source)
 
 ```bash
-cd windows
-python -m venv .ilgc
-.ilgc\Scripts\activate
-pip install -r requirements.txt
+# Clone the repo
+git clone https://github.com/YOUR_USERNAME/ILGC_final_system.git
+cd ILGC_final_system
+
+# Run the unified launcher (starts all services)
+python launcher.py
 ```
 
-Start 4 terminals with venv activated:
-- Terminal 1: `python api_server.py`
-- Terminal 2: `python src/watch.py`
-- Terminal 3: `python src/client.py`
-- Terminal 4: `python src/collate_data.py`
+Or manually start each service:
 
-Start frontend:
-```bash
-cd frontend
-npm install
-npm run dev
-```
-
-### macOS Setup
-
+**macOS:**
 ```bash
 cd mac
-python3 -m venv .ilgc
-source .ilgc/bin/activate
+python3 -m venv .ilgc && source .ilgc/bin/activate
 pip install -r requirements.txt
-cp -r lib/pylsl/* .ilgc/lib/python3.13/site-packages/pylsl/lib
+cp -r lib/pylsl/* .ilgc/lib/python3.*/site-packages/pylsl/lib
+
+# Start services in separate terminals:
+python api_server.py
+python src/watch.py
+python src/client.py
+python src/collate_data.py
+
+# Start frontend:
+cd frontend && npm install && npm run dev
 ```
 
-Start 4 terminals with venv activated:
-- Terminal 1: `python api_server.py`
-- Terminal 2: `python src/watch.py`
-- Terminal 3: `python src/client.py`
-- Terminal 4: `python src/collate_data.py`
+**Windows:**
+```cmd
+cd windows
+python -m venv .ilgc && .ilgc\Scripts\activate
+pip install -r requirements.txt
 
-Start frontend:
-```bash
-cd frontend
-npm install
-npm run dev
+# Start services in separate terminals:
+python api_server.py
+python src/watch.py
+python src/client.py
+python src/collate_data.py
+
+# Start frontend:
+cd frontend && npm install && npm run dev
 ```
 
 ---
 
-## Building from Source
+## Building Installers
 
-### macOS
+### Build Locally
+
+**macOS:**
 ```bash
 chmod +x build.sh
 ./build.sh
+# Output: dist/ILGC-Workplace.dmg
 ```
 
-### Windows
+**Windows:**
 ```cmd
 build.bat
+# Output: dist/ILGC-Workplace.exe and Output/ILGC-Setup-Windows.exe
 ```
+
+### Creating a Release (Automatic via GitHub Actions)
+
+1. **Tag a new version:**
+   ```bash
+   git add .
+   git commit -m "Release v1.0.0"
+   git tag v1.0.0
+   git push origin main --tags
+   ```
+
+2. **GitHub Actions automatically:**
+   - Builds for Windows and macOS
+   - Creates installers
+   - Publishes to GitHub Releases
+
+3. **Download links auto-update** to point to the latest release
+
+### Manual Release Upload
+
+If you build locally and want to upload manually:
+
+1. Go to your repo > **Releases** > **Create a new release**
+2. Create a new tag (e.g., `v1.0.0`)
+3. Upload your build files:
+   - `ILGC-Workplace.dmg` (macOS)
+   - `ILGC-Setup-Windows.exe` (Windows installer)
+   - `ILGC-Workplace.exe` (Windows standalone)
+4. Publish the release
+
+**Important:** Do NOT push large executable files to git. Use GitHub Releases for distribution.
 
 ---
 
@@ -114,30 +149,30 @@ build.bat
 
 1. Fill out the task form with participant details
 2. Click Start Task to begin monitoring
-3. System monitors for distractions via screen content and HRV
-4. Interventions are delivered via notifications
+3. System monitors distractions via screen content and HRV data
+4. Interventions delivered as notifications when distraction detected
 
 ## API Endpoints
 
-- POST /api/save-task-details - Save task details and start interventions
-- POST /api/stop-interventions - Stop interventions
-- POST /api/save-feedback - Save user feedback
-- POST /api/save-assessment - Save task assessment
-- GET /api/status - Get monitoring status
-- GET /api/health - Health check
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/save-task-details` | POST | Save task and start interventions |
+| `/api/stop-interventions` | POST | Stop monitoring |
+| `/api/status` | GET | Get monitoring status |
+| `/api/health` | GET | Health check |
 
 ## Troubleshooting
 
 **Camera Not Working:**
+- macOS: System Preferences > Privacy & Security > Camera > Allow
 - Windows: Settings > Privacy > Camera > Enable
-- macOS: System Preferences > Privacy > Camera
 
-**Notifications Not Appearing (macOS):**
-- System Preferences > Notifications > Script Editor > Allow
+**App Won't Open (macOS):**
+- Right-click the app > Open > Open (bypasses Gatekeeper)
 
 **Heart Rate Monitor Not Connecting:**
 - Ensure Bluetooth is enabled
-- Make sure hBand device is powered on
+- Make sure hBand is powered on and not connected to another device
 
 ## License
 

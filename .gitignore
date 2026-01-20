@@ -1,28 +1,69 @@
-# Build artifacts
-build/
+# Build outputs - DO NOT PUSH TO GIT (use GitHub Releases instead)
 dist/
-*.pkg
+build/
+Output/
+*.exe
 *.dmg
 *.app
+*.pkg
 
-# Python
+# Build virtual environment
+.build_venv/
+
+# Python virtual environments
+.ilgc/
+venv/
+.venv/
+env/
+
+# Python cache
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 .Python
-env/
-venv/
-ENV/
-.venv
+
+# PyInstaller
+*.manifest
+*.spec.bak
+
+# Logs
+logs/
+*.log
+
+# Runtime data directories
+collated/
+screenshot/
+watch/
+feedback/
+interventions/
+details/
+
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Frontend build (regenerated)
+mac/frontend/dist/
+windows/frontend/dist/
 
 # IDE
-.vscode/
 .idea/
+.vscode/
 *.swp
 *.swo
 *~
-
-# OS
 .DS_Store
 Thumbs.db
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
