@@ -312,6 +312,21 @@ def simplify_data_for_api(data):
                     }
                 )
 
+        # ActivityWatch window + AFK chunks
+        aw_data = entry.get("aw_data", [])
+        if aw_data:
+            result["screen_activity"] = [
+                {
+                    "start":            chunk.get("start"),
+                    "end":              chunk.get("end"),
+                    "duration_seconds": chunk.get("duration_seconds"),
+                    "app":              chunk.get("app"),
+                    "title":            chunk.get("title"),
+                    "afk_status":       chunk.get("afk_status"),
+                }
+                for chunk in aw_data
+            ]
+
     return result
 
 import re
@@ -438,6 +453,7 @@ def analyze_distraction(data):
         "monitoring_data": simplified_data.get("monitoring_data", []),
         "user_feedback": simplified_data.get("user_feedback"),
         "previous_interventions": simplified_data.get("previous_interventions", []),
+        "screen_activity": simplified_data.get("screen_activity", []),  # AW window+AFK data
     }
 
     try:

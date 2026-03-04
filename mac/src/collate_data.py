@@ -6,13 +6,14 @@ import signal
 
 # Configuration
 base_dir = os.path.dirname(os.path.abspath(__file__))
-SCREENSHOT_FILE = "./screenshot/combined_captions.json"
-WATCH_FILE = "./watch/watch_data.json"
+SCREENSHOT_FILE   = "./screenshot/combined_captions.json"
+WATCH_FILE        = "./watch/watch_data.json"
 INTERVENTIONS_FILE = "./interventions/interventions.json"
-COLLATED_DIR = os.path.join(base_dir, "..", "collated")
+AW_FILE           = "./activityTracker/activity.json"   # ← ActivityWatch data
+COLLATED_DIR      = os.path.join(base_dir, "..", "collated")
 os.makedirs(COLLATED_DIR, exist_ok=True)
 INTERVAL = 60  # seconds
-RUNNING = True
+RUNNING  = True
 
 def stop(*_):
     global RUNNING
@@ -22,8 +23,8 @@ def stop(*_):
 signal.signal(signal.SIGINT, stop)
 signal.signal(signal.SIGTERM, stop)
 
+
 def load_json_file(filepath):
-    """Load JSON file safely, return empty dict if file doesn't exist or is invalid"""
     try:
         if os.path.exists(filepath):
             with open(filepath, 'r') as f:
@@ -32,100 +33,102 @@ def load_json_file(filepath):
         print(f"Error loading {filepath}: {e}")
     return {}
 
+
 def get_last_entries(data, count):
-    """Get the last N entries from different JSON structures"""
     if isinstance(data, dict):
         if 'entries' in data:
-            # Watch data format
             entries = data.get('entries', [])
             return entries[-count:] if len(entries) >= count else entries
         else:
-            # Screenshot captions format - convert to list of entries
             items = list(data.items())
             return [{"timestamp": k, "captions": v} for k, v in items[-count:]] if items else []
     return []
 
+
+def get_recent_aw_chunks(data, count=10):
+    """
+    Return the last `count` AW chunks.
+    Strips out any afk chunks to reduce noise — GPT only needs
+    what the user was actually doing on screen.
+    """
+    if not isinstance(data, dict):
+        return []
+    chunks = data.get("chunks", [])
+    # Keep all chunks (including afk) so GPT has full picture,
+    # but trim to last `count` entries to avoid token bloat
+    return chunks[-count:] if len(chunks) >= count else chunks
+
+
 def load_intervention_data():
-    """Load intervention data based on the specified rules"""
     try:
         if not os.path.exists(INTERVENTIONS_FILE):
             return []
-        
         interventions = load_json_file(INTERVENTIONS_FILE)
-        
-        # If interventions is empty or not a list, return empty
         if not isinstance(interventions, list) or len(interventions) == 0:
             return []
-        
-        # If only 1-3 interventions exist, return all of them
         if len(interventions) <= 3:
             return interventions
-        
-        # If 4 or more exist, return the last 4
         return interventions[-4:]
-        
     except Exception as e:
         print(f"Error loading intervention data: {e}")
         return []
 
+
 def collate_data():
-    """Collate data from both sources and save to a new file"""
     try:
-        # Load data from all sources
-        screenshot_data = load_json_file(SCREENSHOT_FILE)
-        watch_data = load_json_file(WATCH_FILE)
+        screenshot_data  = load_json_file(SCREENSHOT_FILE)
+        watch_data       = load_json_file(WATCH_FILE)
         intervention_data = load_intervention_data()
-        
-        # Get last entries
+        aw_data          = load_json_file(AW_FILE)           # ← load AW
+
         last_screenshots = get_last_entries(screenshot_data, 6)
-        last_watch = get_last_entries(watch_data, 2)
-        
-        # Create collated data structure
+        last_watch       = get_last_entries(watch_data, 2)
+        last_aw_chunks   = get_recent_aw_chunks(aw_data, 10)  # ← last 10 chunks
+
         timestamp = datetime.now()
         collated_data = {
-            "collation_timestamp": timestamp.strftime('%Y-%m-%d %H:%M:%S'),
+            "collation_timestamp":     timestamp.strftime('%Y-%m-%d %H:%M:%S'),
             "collation_timestamp_iso": timestamp.isoformat(),
-            "interval_seconds": INTERVAL,
+            "interval_seconds":        INTERVAL,
             "data_sources": {
-                "screenshot_entries": len(last_screenshots),
-                "watch_entries": len(last_watch),
-                "intervention_entries": len(intervention_data)
+                "screenshot_entries":    len(last_screenshots),
+                "watch_entries":         len(last_watch),
+                "intervention_entries":  len(intervention_data),
+                "aw_chunks":             len(last_aw_chunks),   # ← added
             },
-            "screenshot_data": last_screenshots,
-            "watch_data": last_watch,
-            "intervention_data": intervention_data,
+            "screenshot_data":    last_screenshots,
+            "watch_data":         last_watch,
+            "intervention_data":  intervention_data,
+            "aw_data":            last_aw_chunks,               # ← added
             "summary": {
-                "screenshot_count": len(last_screenshots),
-                "watch_count": len(last_watch),
-                "intervention_count": len(intervention_data),
-                "total_entries": len(last_screenshots) + len(last_watch) + len(intervention_data)
+                "screenshot_count":    len(last_screenshots),
+                "watch_count":         len(last_watch),
+                "intervention_count":  len(intervention_data),
+                "aw_count":            len(last_aw_chunks),     # ← added
+                "total_entries":       len(last_screenshots) + len(last_watch) + len(intervention_data) + len(last_aw_chunks),
             }
         }
-        
-        # Create output directory
+
         os.makedirs(COLLATED_DIR, exist_ok=True)
-        
-        # Generate filename with timestamp
         filename = f"combined_{timestamp.strftime('%Y%m%d_%H%M%S')}.json"
         filepath = os.path.join(COLLATED_DIR, filename)
-        
-        # Save collated data
+
         with open(filepath, 'w') as f:
             json.dump(collated_data, f, indent=2)
-        
+
         print(f"Collated data saved: {filename}")
-        print(f"  - Screenshot entries: {len(last_screenshots)}")
-        print(f"  - Watch entries: {len(last_watch)}")
+        print(f"  - Screenshot entries : {len(last_screenshots)}")
+        print(f"  - Watch entries      : {len(last_watch)}")
         print(f"  - Intervention entries: {len(intervention_data)}")
-        
+        print(f"  - AW chunks          : {len(last_aw_chunks)}")
         return True
-        
+
     except Exception as e:
         print(f"Error during collation: {e}")
         return False
 
+
 def clear_existing_files():
-    """Clear existing collated files when starting"""
     try:
         if os.path.exists(COLLATED_DIR):
             for file in os.listdir(COLLATED_DIR):
@@ -134,47 +137,38 @@ def clear_existing_files():
                     print(f"Removed existing file: {file}")
         else:
             os.makedirs(COLLATED_DIR, exist_ok=True)
-        
         print("Cleared existing collated files")
     except Exception as e:
         print(f"Error clearing files: {e}")
 
+
 def main():
     print("Starting data collation service...")
     print(f"Monitoring:")
-    print(f"  - Screenshots: {SCREENSHOT_FILE}")
-    print(f"  - Watch data: {WATCH_FILE}")
+    print(f"  - Screenshots  : {SCREENSHOT_FILE}")
+    print(f"  - Watch data   : {WATCH_FILE}")
     print(f"  - Interventions: {INTERVENTIONS_FILE}")
-    print(f"  - Output directory: {COLLATED_DIR}")
-    print(f"  - Interval: {INTERVAL} seconds")
+    print(f"  - ActivityWatch: {AW_FILE}")
+    print(f"  - Output dir   : {COLLATED_DIR}")
+    print(f"  - Interval     : {INTERVAL} seconds")
     print("Press Ctrl+C to stop.\n")
-    
-    # Clear existing files
+
     clear_existing_files()
-    
+
     collation_count = 0
-    next_collation = time.time() + INTERVAL
-    
+    next_collation  = time.time() + INTERVAL
+
     while RUNNING:
-        current_time = time.time()
-        
-        if current_time >= next_collation:
+        if time.time() >= next_collation:
             collation_count += 1
             print(f"\n--- Collation #{collation_count} at {datetime.now().strftime('%H:%M:%S')} ---")
-            
-            if collate_data():
-                print("Collation successful")
-            else:
-                print("Collation failed")
-            
-            # Schedule next collation
-            next_collation = current_time + INTERVAL
+            collate_data()
+            next_collation = time.time() + INTERVAL
             print(f"Next collation in {INTERVAL} seconds...")
-        
-        # Sleep for a short interval to avoid busy waiting
         time.sleep(1)
-    
+
     print("Data collation service stopped.")
+
 
 if __name__ == "__main__":
     main()
