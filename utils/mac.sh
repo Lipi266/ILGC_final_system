@@ -1,6 +1,23 @@
 #!/bin/bash
 set -e
 
+# ── Cleanup function — kills all AW processes on exit/Ctrl+C ──────
+cleanup() {
+  echo ""
+  echo "Shutting down ActivityWatch..."
+  pkill -f "aw-qt"      2>/dev/null || true
+  pkill -f "aw-server"  2>/dev/null || true
+  pkill -f "aw-watcher" 2>/dev/null || true
+  sleep 1
+  pkill -9 -f "aw-qt"      2>/dev/null || true
+  pkill -9 -f "aw-server"  2>/dev/null || true
+  pkill -9 -f "aw-watcher" 2>/dev/null || true
+  echo "ActivityWatch stopped."
+  exit 0
+}
+
+trap cleanup SIGINT SIGTERM SIGHUP EXIT
+
 # ── Free port 5600 if anything is still holding it ────────────────
 echo "Checking port 5600..."
 PIDS=$(lsof -ti :5600 2>/dev/null || true)
@@ -13,58 +30,66 @@ else
   echo "Port 5600 is free."
 fi
 
+AppName="ActivityWatch.app"
 VERSION="v0.13.2"
 BASE_URL="https://github.com/ActivityWatch/activitywatch/releases/download/${VERSION}"
 
-mkdir -p activitywatch-install
-cd activitywatch-install || exit
-
-FILE="activitywatch-${VERSION}-macos-x86_64.dmg"
-URL="${BASE_URL}/${FILE}"
-
-echo "Downloading ActivityWatch for macOS..."
-curl -L -o "$FILE" "$URL"
-echo "Downloaded: $FILE"
-
-echo "Mounting $FILE..."
-hdiutil attach "$FILE" -nobrowse
-
-DMGVolume=$(hdiutil info | grep "/Volumes/ActivityWatch" | awk -F'\t' '{print $3}' | head -1)
-if [ -z "$DMGVolume" ]; then
-  echo "Failed to find mounted ActivityWatch volume"
-  exit 1
-fi
-echo "Found mounted volume: $DMGVolume"
-
-AppName="ActivityWatch.app"
-AppPath="$DMGVolume/$AppName"
-
-if [ ! -d "$AppPath" ]; then
-  echo "$AppName not found in mounted volume: $DMGVolume"
-  echo "Available contents:"
-  ls -la "$DMGVolume"
-  hdiutil detach "$DMGVolume"
-  exit 1
-fi
-
+# ── Check if ActivityWatch is already installed ───────────────────
 if [ -d "/Applications/$AppName" ]; then
-  echo "Removing old $AppName..."
-  rm -rf "/Applications/$AppName"
+  echo "ActivityWatch is already installed at /Applications/$AppName"
+  echo "Skipping download and install — launching directly."
+else
+  echo "ActivityWatch not found. Installing..."
+
+  mkdir -p activitywatch-install
+  cd activitywatch-install || exit
+
+  FILE="activitywatch-${VERSION}-macos-x86_64.dmg"
+  URL="${BASE_URL}/${FILE}"
+
+  echo "Downloading ActivityWatch for macOS..."
+  curl -L -o "$FILE" "$URL"
+  echo "Downloaded: $FILE"
+
+  echo "Mounting $FILE..."
+  hdiutil attach "$FILE" -nobrowse
+
+  DMGVolume=$(hdiutil info | grep "/Volumes/ActivityWatch" | awk -F'\t' '{print $3}' | head -1)
+  if [ -z "$DMGVolume" ]; then
+    echo "Failed to find mounted ActivityWatch volume"
+    exit 1
+  fi
+  echo "Found mounted volume: $DMGVolume"
+
+  AppPath="$DMGVolume/$AppName"
+  if [ ! -d "$AppPath" ]; then
+    echo "$AppName not found in mounted volume: $DMGVolume"
+    echo "Available contents:"
+    ls -la "$DMGVolume"
+    hdiutil detach "$DMGVolume"
+    exit 1
+  fi
+
+  echo "Copying $AppName to /Applications..."
+  cp -R "$AppPath" /Applications/
+
+  echo "Unmounting DMG..."
+  hdiutil detach "$DMGVolume"
+
+  echo "Removing quarantine flag..."
+  xattr -dr com.apple.quarantine "/Applications/$AppName" 2>/dev/null || true
+
+  echo "Installation complete."
 fi
 
-echo "Copying $AppName to /Applications..."
-cp -R "$AppPath" /Applications/
-
-echo "Unmounting DMG..."
-hdiutil detach "$DMGVolume"
-
-# Remove Gatekeeper quarantine flag
-echo "Removing quarantine flag..."
-xattr -dr com.apple.quarantine "/Applications/$AppName" 2>/dev/null || true
-
+# ── Launch ────────────────────────────────────────────────────────
 echo "Launching ActivityWatch..."
 open "/Applications/$AppName"
 sleep 3
 
 cd /Applications/ActivityWatch.app/Contents/MacOS/
-./aw-qt
+./aw-qt &
+AW_PID=$!
+
+echo "ActivityWatch running (PID $AW_PID). Press Ctrl+C to stop."
+wait $AW_PID

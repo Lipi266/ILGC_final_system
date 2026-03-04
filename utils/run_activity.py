@@ -2,6 +2,8 @@
 ActivityWatch tracker
 - Records window activity + AFK state as clean chunks
 - Only writes a new chunk when something actually changes
+- Only captures events from the moment the script starts
+- Clears the output file on each run
 
 python -m pip install requests (in venv)
 """
@@ -61,8 +63,9 @@ def find_bucket(prefix: str) -> str | None:
     return None
 
 
-def latest_event(bucket_id: str) -> dict | None:
-    events = _get(f"/buckets/{bucket_id}/events", {"limit": 1})
+def latest_event(bucket_id: str, start: str) -> dict | None:
+    """Fetch the most recent event that occurred after `start` (ISO timestamp)."""
+    events = _get(f"/buckets/{bucket_id}/events", {"limit": 1, "start": start})
     return events[0] if events else None
 
 
@@ -70,14 +73,14 @@ def latest_event(bucket_id: str) -> dict | None:
 # Persistence
 # ──────────────────────────────────────────────────────────────────
 
-def load_chunks() -> list:
-    if os.path.exists(OUT_FILE):
-        try:
-            with open(OUT_FILE) as f:
-                return json.load(f).get("chunks", [])
-        except Exception:
-            pass
-    return []
+def clear_and_init():
+    """Wipe the output file and start fresh."""
+    with open(OUT_FILE, "w") as f:
+        json.dump({
+            "last_updated": datetime.now(timezone.utc).isoformat(),
+            "chunks": [],
+        }, f, indent=2)
+    print(f"Cleared {OUT_FILE}")
 
 
 def save_chunks(chunks: list):
@@ -93,8 +96,15 @@ def save_chunks(chunks: list):
 # ──────────────────────────────────────────────────────────────────
 
 def main():
+    # Record exactly when this session started
+    session_start = datetime.now(timezone.utc).isoformat()
+
     print("ActivityWatch tracker started. Ctrl-C to stop.")
-    print(f"Output → {OUT_FILE}\n")
+    print(f"Session start : {session_start}")
+    print(f"Output        → {OUT_FILE}\n")
+
+    # Clear any data from previous runs
+    clear_and_init()
 
     win_bucket = find_bucket("aw-watcher-window_")
     afk_bucket = find_bucket("aw-watcher-afk_")
@@ -106,18 +116,17 @@ def main():
         print("[error] No buckets found. Is ActivityWatch running?")
         return
 
-    chunks = load_chunks()
+    chunks = []
 
     # State of the currently open (unfinished) chunk
     current = {
         "start":      None,
         "app":        None,
         "title":      None,
-        "afk_status": None,   # "afk" | "not-afk" | "unknown"
+        "afk_status": None,
     }
 
     def close_chunk(end_ts: str):
-        """Finalise the open chunk and append it to the list."""
         if current["start"] is None:
             return
         start_dt = datetime.fromisoformat(current["start"])
@@ -143,15 +152,14 @@ def main():
     while RUNNING:
         now = datetime.now(timezone.utc).isoformat()
 
-        # ── fetch latest events ────────────────────────────────────
-        win_ev = latest_event(win_bucket) if win_bucket else None
-        afk_ev = latest_event(afk_bucket) if afk_bucket else None
+        # Only fetch events that happened after this script started
+        win_ev = latest_event(win_bucket, session_start) if win_bucket else None
+        afk_ev = latest_event(afk_bucket, session_start) if afk_bucket else None
 
         app   = (win_ev or {}).get("data", {}).get("app",    "Unknown")
         title = (win_ev or {}).get("data", {}).get("title",  "")
         afk   = (afk_ev or {}).get("data", {}).get("status", "unknown")
 
-        # ── only act when something actually changes ───────────────
         changed = (
             app   != current["app"]        or
             title != current["title"]      or
