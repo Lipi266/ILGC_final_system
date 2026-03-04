@@ -8,7 +8,7 @@ import json
 from datetime import datetime
 import shutil
 
-SERVER_URL = "http://10.1.45.59:8001/caption"
+SERVER_URL = "http://10.1.45.59:8002/caption"
 
 SAVE_DIR = "./screenshot"
 CAPTION_FILE = os.path.join(SAVE_DIR, "combined_captions.json")

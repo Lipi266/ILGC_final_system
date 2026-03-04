@@ -20,7 +20,7 @@ pause_until = None  # Timestamp when pause should end
 pause_reason = None  # Reason for pause
 
 # Import configuration (if available)
-INTERVENTION_SERVER_URL = "http://10.1.45.59:8001/interventions"
+INTERVENTION_SERVER_URL = "http://10.1.45.59:8002/interventions"
 TIMEOUT = 30
 
 time.sleep(60)
