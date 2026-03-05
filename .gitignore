@@ -1,4 +1,7 @@
 /utils/activityTracker
 /utils/activitywatch-install
 /utils/venv
+/activitywatch-install
+/mac/src/activityTracker
+/Windows/src/activityTracker
 
