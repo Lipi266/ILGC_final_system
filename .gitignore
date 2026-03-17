@@ -5,3 +5,4 @@
 /mac/src/activityTracker
 /Windows/src/activityTracker
 /.aw-install-tmp
+/electron/node_modules
