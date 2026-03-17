@@ -63,7 +63,7 @@ jobs:
 
       - name: Install Electron dependencies
         working-directory: electron
-        run: npm install
+        run: npm ci
 
       - name: Build macOS DMG
         working-directory: electron
@@ -119,7 +119,7 @@ jobs:
 
       - name: Install Electron dependencies
         working-directory: electron
-        run: npm install
+        run: npm ci
 
       - name: Build Windows portable
         working-directory: electron
