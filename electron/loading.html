@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ILGC — Starting…</title>
+  <style>
+    /* ── Reset & base ───────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html, body {
+      width: 100%; height: 100%;
+      background: transparent;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      -webkit-app-region: drag;        /* make the frameless window draggable */
+      user-select: none;
+    }
+
+    /* ── Card ───────────────────────────────────────────────── */
+    .card {
+      width: 100%; height: 100%;
+      background: #ffffff;
+      border-radius: 16px;
+      box-shadow: 0 24px 64px rgba(0,0,0,.18);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 24px;
+      padding: 40px 48px;
+    }
+
+    /* ── Logo / icon ────────────────────────────────────────── */
+    .icon-wrap {
+      width: 64px; height: 64px;
+      background: hsl(210 100% 50% / .1);
+      border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .icon-wrap svg { width: 32px; height: 32px; }
+
+    /* ── Title ──────────────────────────────────────────────── */
+    h1 {
+      font-size: 20px;
+      font-weight: 600;
+      color: #111;
+      letter-spacing: -.3px;
+    }
+
+    /* ── Spinner ────────────────────────────────────────────── */
+    .spinner {
+      width: 36px; height: 36px;
+      border: 3px solid hsl(210 100% 50% / .15);
+      border-top-color: hsl(210 100% 50%);
+      border-radius: 50%;
+      animation: spin .8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Progress bar ───────────────────────────────────────── */
+    .progress-track {
+      width: 100%;
+      height: 4px;
+      background: #f0f0f0;
+      border-radius: 99px;
+      overflow: hidden;
+    }
+    .progress-fill {
+      height: 100%;
+      width: 0%;
+      background: hsl(210 100% 50%);
+      border-radius: 99px;
+      transition: width .4s ease;
+    }
+
+    /* ── Status text ────────────────────────────────────────── */
+    .status {
+      font-size: 13px;
+      color: #666;
+      text-align: center;
+      min-height: 18px;
+      max-width: 340px;
+      line-height: 1.4;
+
+      /* truncate very long lines from script output */
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    /* ── Quit button (shown on error) ───────────────────────── */
+    .quit-btn {
+      display: none;
+      margin-top: 8px;
+      padding: 8px 24px;
+      font-size: 13px;
+      color: #fff;
+      background: #e53e3e;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      -webkit-app-region: no-drag;
+    }
+    .quit-btn:hover { background: #c53030; }
+    .quit-btn.visible { display: inline-block; }
+
+    /* ── "Done" state ───────────────────────────────────────── */
+    .spinner.done {
+      border-color: hsl(142 71% 45%);
+      border-top-color: hsl(142 71% 45%);
+      animation: none;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <!-- Brain icon (inline SVG — no external deps) -->
+    <div class="icon-wrap">
+      <svg viewBox="0 0 24 24" fill="none" stroke="hsl(210 100% 50%)"
+           stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96-.44 2.5 2.5 0 0 1-2.96-3.08 3 3 0 0 1-.34-5.58 2.5 2.5 0 0 1 1.32-4.24 2.5 2.5 0 0 1 4.44-1.66Z"/>
+        <path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96-.44 2.5 2.5 0 0 0 2.96-3.08 3 3 0 0 0 .34-5.58 2.5 2.5 0 0 0-1.32-4.24 2.5 2.5 0 0 0-4.44-1.66Z"/>
+      </svg>
+    </div>
+
+    <h1>ILGC Research</h1>
+
+    <div class="spinner" id="spinner"></div>
+
+    <div class="progress-track">
+      <div class="progress-fill" id="progressFill"></div>
+    </div>
+
+    <p class="status" id="statusText">Initialising…</p>
+
+    <button class="quit-btn" id="quitBtn" onclick="window.ilgc.quit()">
+      Quit
+    </button>
+  </div>
+
+  <script>
+    const statusEl   = document.getElementById('statusText');
+    const fillEl     = document.getElementById('progressFill');
+    const spinnerEl  = document.getElementById('spinner');
+    const quitBtn    = document.getElementById('quitBtn');
+
+    window.ilgc.onStatus(({ message, progress }) => {
+      // Update status text
+      statusEl.textContent = message;
+      statusEl.title = message;   // full text on hover
+
+      // Update progress bar if a value was supplied
+      if (progress !== null && progress !== undefined) {
+        fillEl.style.width = `${progress}%`;
+      }
+
+      // Error state: show quit button
+      if (message.startsWith('Error:')) {
+        spinnerEl.style.borderColor = '#e53e3e';
+        spinnerEl.style.borderTopColor = '#e53e3e';
+        spinnerEl.style.animation = 'none';
+        quitBtn.classList.add('visible');
+      }
+
+      // Done state: turn spinner green briefly
+      if (progress === 100) {
+        spinnerEl.classList.add('done');
+      }
+    });
+  </script>
+</body>
+</html>
