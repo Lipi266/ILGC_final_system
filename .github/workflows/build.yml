@@ -1,10 +1,17 @@
 name: Build ILGC Desktop Apps
 
+# ── Trigger ────────────────────────────────────────────────────
+# Manual only. Go to Actions → Build ILGC Desktop Apps → Run workflow.
+# Select the activity branch in the dropdown before clicking Run.
+# This avoids all default-branch restrictions GitHub imposes on
+# push/tag triggers.
 on:
-  push:
-    tags:
-      - 'v*'          # trigger on version tags: v1.0.0, v1.2.3, etc.
-  workflow_dispatch:   # also allow manual runs from the Actions tab
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version label for this build (e.g. v1.0.0)'
+        required: false
+        default: 'dev'
 
 permissions:
   contents: write      # needed to create GitHub Releases and upload assets
@@ -21,33 +28,23 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # ── Node.js (for Electron Builder) ──────────────────────
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'npm'
-          cache-dependency-path: electron/package.json
 
-      # ── Python (bundled into extraResources so the app can
-      #    run start_mac.sh on the user's machine; the script
-      #    itself installs its own venv, so we just need Python
-      #    present for the build step to validate requirements) ─
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
 
-      # ── Generate placeholder icons if none exist ─────────────
-      # In a real release replace icons/ with proper .icns/.ico
-      - name: Create placeholder icons
+      # ── Generate placeholder icons if none committed yet ─────
+      # Replace electron/icons/icon.icns with a real icon later.
+      - name: Create placeholder icon (macOS)
         run: |
           mkdir -p electron/icons
-          # macOS icns placeholder (512×512 PNG converted via sips)
           if [ ! -f electron/icons/icon.icns ]; then
             python3 - <<'PYEOF'
-          import struct, zlib, base64
-          # Tiny 1×1 blue PNG
           raw = (b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01'
                  b'\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00\x00'
                  b'\x00\x0cIDATx\x9cc\xf8\x1f\x00\x00\x03\x01\x01\xf5\xf3'
@@ -56,30 +53,24 @@ jobs:
               f.write(raw)
           PYEOF
             mkdir -p /tmp/icon.iconset
-            sips -z 16 16   /tmp/icon.png --out /tmp/icon.iconset/icon_16x16.png    2>/dev/null || true
-            sips -z 32 32   /tmp/icon.png --out /tmp/icon.iconset/icon_32x32.png    2>/dev/null || true
-            sips -z 128 128 /tmp/icon.png --out /tmp/icon.iconset/icon_128x128.png  2>/dev/null || true
-            sips -z 256 256 /tmp/icon.png --out /tmp/icon.iconset/icon_256x256.png  2>/dev/null || true
-            sips -z 512 512 /tmp/icon.png --out /tmp/icon.iconset/icon_512x512.png  2>/dev/null || true
-            iconutil -c icns /tmp/icon.iconset -o electron/icons/icon.icns 2>/dev/null || \
-              cp /tmp/icon.png electron/icons/icon.icns   # fallback if iconutil fails
+            for size in 16 32 128 256 512; do
+              sips -z $size $size /tmp/icon.png \
+                --out /tmp/icon.iconset/icon_${size}x${size}.png 2>/dev/null || true
+            done
+            iconutil -c icns /tmp/icon.iconset -o electron/icons/icon.icns 2>/dev/null \
+              || cp /tmp/icon.png electron/icons/icon.icns
           fi
 
-      # ── Install Electron dependencies ───────────────────────
       - name: Install Electron dependencies
         working-directory: electron
         run: npm ci
 
-      # ── Build the DMG ───────────────────────────────────────
       - name: Build macOS DMG
         working-directory: electron
         env:
-          # Unsigned build — no Apple credentials needed.
-          # Users will need to right-click → Open on first launch.
-          CSC_IDENTITY_AUTO_DISCOVERY: false
+          CSC_IDENTITY_AUTO_DISCOVERY: false   # unsigned — no Apple creds needed
         run: npm run build:mac
 
-      # ── Upload DMG as workflow artifact ─────────────────────
       - name: Upload DMG artifact
         uses: actions/upload-artifact@v4
         with:
@@ -88,10 +79,10 @@ jobs:
           retention-days: 30
 
   # ────────────────────────────────────────────────────────────
-  # Windows → NSIS installer (.exe)
+  # Windows → portable .exe (no installation required)
   # ────────────────────────────────────────────────────────────
   build-windows:
-    name: Build Windows Installer
+    name: Build Windows Portable
     runs-on: windows-latest
 
     steps:
@@ -102,61 +93,52 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'npm'
-          cache-dependency-path: electron/package.json
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
 
-      # ── Create placeholder icon ──────────────────────────────
-      - name: Create placeholder icon
+      # ── Generate placeholder icon if none committed yet ──────
+      - name: Create placeholder icon (Windows)
         shell: python
         run: |
           import os, struct
           os.makedirs('electron/icons', exist_ok=True)
           ico_path = 'electron/icons/icon.ico'
           if not os.path.exists(ico_path):
-              # Minimal valid 16×16 ICO file (blue square)
-              # ICO header
-              header = struct.pack('<HHH', 0, 1, 1)
-              # Image entry: 16×16, 0 colours, 0 reserved, 1 plane, 32bpp
-              img_data = bytes([0, 255, 0, 0] * (16 * 16))  # BGRA blue pixels
-              bmp_header = struct.pack('<IIIHHIIIIII',
-                  40, 16, 32, 1, 32, 0, len(img_data), 0, 0, 0, 0)
-              bmp = bmp_header + img_data
-              entry = struct.pack('<BBBBHHII', 16, 16, 0, 0, 1, 32, len(bmp), 22)
+              header   = struct.pack('<HHH', 0, 1, 1)
+              img_data = bytes([0, 0, 255, 0] * (16 * 16))   # BGRA blue pixels
+              bmp_hdr  = struct.pack('<IIIHHIIIIII',
+                             40, 16, 32, 1, 32, 0, len(img_data), 0, 0, 0, 0)
+              bmp      = bmp_hdr + img_data
+              entry    = struct.pack('<BBBBHHII', 16, 16, 0, 0, 1, 32, len(bmp), 22)
               with open(ico_path, 'wb') as f:
                   f.write(header + entry + bmp)
               print(f'Created placeholder icon at {ico_path}')
 
-      # ── Install Electron dependencies ───────────────────────
       - name: Install Electron dependencies
         working-directory: electron
         run: npm ci
 
-      # ── Build the NSIS installer ─────────────────────────────
-      - name: Build Windows NSIS installer
+      - name: Build Windows portable
         working-directory: electron
         run: npm run build:win
 
-      # ── Upload installer as workflow artifact ─────────────────
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ILGC-windows-installer
+          name: ILGC-windows-portable
           path: dist-electron/*.exe
           retention-days: 30
 
   # ────────────────────────────────────────────────────────────
-  # Release — only on tag pushes, attaches both artifacts
+  # Release — runs after both builds succeed, every time
   # ────────────────────────────────────────────────────────────
   release:
     name: Create GitHub Release
     needs: [build-mac, build-windows]
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/')
 
     steps:
       - name: Download macOS artifact
@@ -168,15 +150,19 @@ jobs:
       - name: Download Windows artifact
         uses: actions/download-artifact@v4
         with:
-          name: ILGC-windows-installer
+          name: ILGC-windows-portable
           path: release-assets
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          name: ILGC Research ${{ github.ref_name }}
+          tag_name: ${{ github.event.inputs.version }}-${{ github.run_number }}
+          name: ILGC Research ${{ github.event.inputs.version }}
           body: |
-            ## ILGC Research Desktop App — ${{ github.ref_name }}
+            ## ILGC Research Desktop App — ${{ github.event.inputs.version }}
+
+            Built from branch: `${{ github.ref_name }}`
+            Commit: `${{ github.sha }}`
 
             ### Installation
 
@@ -186,14 +172,13 @@ jobs:
             3. On first launch: right-click → **Open** (unsigned build)
 
             **Windows**
-            1. Download the `-Setup.exe` file
-            2. Run the installer (click "More info → Run anyway" if SmartScreen appears)
-            3. Launch **ILGC Research** from the Start Menu or Desktop shortcut
+            1. Download the `.exe` file — no installation needed
+            2. Double-click to run (click "More info → Run anyway" if SmartScreen appears)
 
             ### What the app does
-            - Automatically sets up all backend services (ActivityWatch, Python API, data collectors)
+            - Automatically sets up all backend services
             - Shows a loading screen with live progress while everything starts
             - Opens the ILGC Research frontend once all services are ready
           draft: false
-          prerelease: false
+          prerelease: ${{ github.event.inputs.version == 'dev' }}
           files: release-assets/*
