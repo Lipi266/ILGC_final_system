@@ -1,5 +1,16 @@
+const { app, BrowserWindow, ipcMain, shell } = require('electron');
+const path = require('path');
+const fs = require('fs');
+const http = require('http');
+const { spawn } = require('child_process');
 
-// In dev, __dirname is electron/
+const IS_MAC = process.platform === 'darwin';
+const IS_WIN = process.platform === 'win32';
+
+let loadingWindow = null;
+let mainWindow = null;
+let runningProcesses = [];
+
 const PROJECT_ROOT = app.isPackaged
   ? path.join(process.resourcesPath, 'project')
   : path.join(__dirname, '..');
