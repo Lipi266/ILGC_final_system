@@ -10,26 +10,22 @@
     "build:win": "electron-builder --win",
     "build:all": "electron-builder --mac --win"
   },
-  "dependencies": {},
   "devDependencies": {
-    "electron": "^31.0.0",
-    "electron-builder": "^24.13.3"
+    "electron": "^41.0.2",
+    "electron-builder": "^26.8.1"
   },
   "build": {
     "appId": "com.ilgc.research",
     "productName": "ILGC Research",
     "copyright": "Copyright © 2025 ILGC Research Team",
-
     "directories": {
       "output": "../dist-electron"
     },
-
     "files": [
       "main.js",
       "preload.js",
       "loading.html"
     ],
-
     "extraResources": [
       {
         "from": "../",
@@ -51,39 +47,52 @@
         ]
       }
     ],
-
     "mac": {
       "category": "public.app-category.productivity",
       "icon": "icons/icon.icns",
       "target": [
         {
           "target": "dmg",
-          "arch": ["x64", "arm64"]
+          "arch": [
+            "x64",
+            "arm64"
+          ]
         }
       ],
       "hardenedRuntime": false,
       "gatekeeperAssess": false
     },
-
     "dmg": {
       "title": "ILGC Research",
       "contents": [
-        { "x": 410, "y": 150, "type": "link", "path": "/Applications" },
-        { "x": 130, "y": 150, "type": "file" }
+        {
+          "x": 410,
+          "y": 150,
+          "type": "link",
+          "path": "/Applications"
+        },
+        {
+          "x": 130,
+          "y": 150,
+          "type": "file"
+        }
       ],
-      "window": { "width": 540, "height": 380 }
+      "window": {
+        "width": 540,
+        "height": 380
+      }
     },
-
     "win": {
       "icon": "icons/icon.ico",
       "target": [
         {
           "target": "nsis",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ]
     },
-
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
