@@ -35,6 +35,7 @@
           "start_windows.bat",
           "stop_windows.bat",
           "mac/**/*",
+          "!mac/lib/**",
           "windows/**/*",
           "utils/**/*",
           "!**/node_modules/**",
@@ -91,9 +92,6 @@
             "x64"
           ]
         }
-      ],
-      "files": [
-        "!resources/project/mac/**"
       ]
     },
     "nsis": {
