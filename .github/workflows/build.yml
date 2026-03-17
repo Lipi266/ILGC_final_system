@@ -103,19 +103,42 @@ jobs:
       - name: Create placeholder icon (Windows)
         shell: python
         run: |
-          import os, struct
+          import os, struct, zlib
+
           os.makedirs('electron/icons', exist_ok=True)
           ico_path = 'electron/icons/icon.ico'
           if not os.path.exists(ico_path):
-              header   = struct.pack('<HHH', 0, 1, 1)
-              img_data = bytes([0, 0, 255, 0] * (16 * 16))   # BGRA blue pixels
-              bmp_hdr  = struct.pack('<IIIHHIIIIII',
-                             40, 16, 32, 1, 32, 0, len(img_data), 0, 0, 0, 0)
-              bmp      = bmp_hdr + img_data
-              entry    = struct.pack('<BBBBHHII', 16, 16, 0, 0, 1, 32, len(bmp), 22)
+              SIZE = 256
+
+              # Build a minimal PNG in memory (solid blue, SIZE x SIZE)
+              def make_png(size):
+                  def chunk(tag, data):
+                      c = zlib.crc32(tag + data) & 0xFFFFFFFF
+                      return struct.pack('>I', len(data)) + tag + data + struct.pack('>I', c)
+                  sig = b'\x89PNG\r\n\x1a\n'
+                  ihdr = chunk(b'IHDR', struct.pack('>IIBBBBB', size, size, 8, 2, 0, 0, 0))
+                  raw = b''
+                  for _ in range(size):
+                      row = b'\x00' + b'\x00\x00\xff' * size  # filter byte + RGB blue
+                      raw += row
+                  idat = chunk(b'IDAT', zlib.compress(raw))
+                  iend = chunk(b'IEND', b'')
+                  return sig + ihdr + idat + iend
+
+              png_data = make_png(SIZE)
+
+              # ICO format: directory entry with PNG stored directly
+              # Width/height = 0 means 256 in the ICO spec
+              ico_header = struct.pack('<HHH', 0, 1, 1)
+              ico_entry  = struct.pack('<BBBBHHII',
+                               0, 0,           # width=256, height=256 (0 == 256)
+                               0, 0,           # color count, reserved
+                               1, 32,          # planes, bit count
+                               len(png_data),  # size of image data
+                               22)             # offset: 6-byte header + 16-byte entry
               with open(ico_path, 'wb') as f:
-                  f.write(header + entry + bmp)
-              print(f'Created placeholder icon at {ico_path}')
+                  f.write(ico_header + ico_entry + png_data)
+              print(f'Created 256x256 placeholder icon at {ico_path}')
 
       - name: Install Electron dependencies
         working-directory: electron
