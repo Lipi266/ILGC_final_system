@@ -1,10 +1,5 @@
 name: Build ILGC Desktop Apps
 
-# ── Trigger ────────────────────────────────────────────────────
-# Manual only. Go to Actions → Build ILGC Desktop Apps → Run workflow.
-# Select the activity branch in the dropdown before clicking Run.
-# This avoids all default-branch restrictions GitHub imposes on
-# push/tag triggers.
 on:
   workflow_dispatch:
     inputs:
@@ -14,12 +9,9 @@ on:
         default: 'dev'
 
 permissions:
-  contents: write      # needed to create GitHub Releases and upload assets
+  contents: write
 
 jobs:
-  # ────────────────────────────────────────────────────────────
-  # macOS → universal DMG (x64 + arm64)
-  # ────────────────────────────────────────────────────────────
   build-mac:
     name: Build macOS DMG
     runs-on: macos-latest
@@ -38,8 +30,6 @@ jobs:
         with:
           python-version: '3.12'
 
-      # ── Generate placeholder icons if none committed yet ─────
-      # Replace electron/icons/icon.icns with a real icon later.
       - name: Create placeholder icon (macOS)
         run: |
           mkdir -p electron/icons
@@ -68,7 +58,7 @@ jobs:
       - name: Build macOS DMG
         working-directory: electron
         env:
-          CSC_IDENTITY_AUTO_DISCOVERY: false   # unsigned — no Apple creds needed
+          CSC_IDENTITY_AUTO_DISCOVERY: false
         run: npm run build:mac
 
       - name: Upload DMG artifact
@@ -78,9 +68,6 @@ jobs:
           path: dist-electron/*.dmg
           retention-days: 30
 
-  # ────────────────────────────────────────────────────────────
-  # Windows → portable .exe (no installation required)
-  # ────────────────────────────────────────────────────────────
   build-windows:
     name: Build Windows Portable
     runs-on: windows-latest
@@ -99,7 +86,6 @@ jobs:
         with:
           python-version: '3.12'
 
-      # ── Generate placeholder icon if none committed yet ──────
       - name: Create placeholder icon (Windows)
         shell: python
         run: |
@@ -110,7 +96,6 @@ jobs:
           if not os.path.exists(ico_path):
               SIZE = 256
 
-              # Build a minimal PNG in memory (solid blue, SIZE x SIZE)
               def make_png(size):
                   def chunk(tag, data):
                       c = zlib.crc32(tag + data) & 0xFFFFFFFF
@@ -119,7 +104,7 @@ jobs:
                   ihdr = chunk(b'IHDR', struct.pack('>IIBBBBB', size, size, 8, 2, 0, 0, 0))
                   raw = b''
                   for _ in range(size):
-                      row = b'\x00' + b'\x00\x00\xff' * size  # filter byte + RGB blue
+                      row = b'\x00' + b'\x00\x00\xff' * size
                       raw += row
                   idat = chunk(b'IDAT', zlib.compress(raw))
                   iend = chunk(b'IEND', b'')
@@ -127,15 +112,13 @@ jobs:
 
               png_data = make_png(SIZE)
 
-              # ICO format: directory entry with PNG stored directly
-              # Width/height = 0 means 256 in the ICO spec
               ico_header = struct.pack('<HHH', 0, 1, 1)
               ico_entry  = struct.pack('<BBBBHHII',
-                               0, 0,           # width=256, height=256 (0 == 256)
-                               0, 0,           # color count, reserved
-                               1, 32,          # planes, bit count
-                               len(png_data),  # size of image data
-                               22)             # offset: 6-byte header + 16-byte entry
+                               0, 0,
+                               0, 0,
+                               1, 32,
+                               len(png_data),
+                               22)
               with open(ico_path, 'wb') as f:
                   f.write(ico_header + ico_entry + png_data)
               print(f'Created 256x256 placeholder icon at {ico_path}')
@@ -143,6 +126,15 @@ jobs:
       - name: Install Electron dependencies
         working-directory: electron
         run: npm ci
+
+      - name: Remove macOS-only native libs (symlinks invalid on Windows)
+        shell: pwsh
+        run: |
+          $macLib = "electron/resources/project/mac/lib/pylsl"
+          if (Test-Path $macLib) {
+            Remove-Item -Recurse -Force $macLib
+            Write-Host "Removed $macLib"
+          }
 
       - name: Build Windows portable
         working-directory: electron
@@ -155,9 +147,6 @@ jobs:
           path: dist-electron/*.exe
           retention-days: 30
 
-  # ────────────────────────────────────────────────────────────
-  # Release — runs after both builds succeed, every time
-  # ────────────────────────────────────────────────────────────
   release:
     name: Create GitHub Release
     needs: [build-mac, build-windows]
