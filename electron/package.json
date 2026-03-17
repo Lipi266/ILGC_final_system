@@ -91,6 +91,9 @@
             "x64"
           ]
         }
+      ],
+      "files": [
+        "!resources/project/mac/**"
       ]
     },
     "nsis": {
