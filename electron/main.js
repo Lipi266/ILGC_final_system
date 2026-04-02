@@ -25,11 +25,21 @@ const FRONTEND_URL = 'http://localhost:8080';
 const API_URL      = 'http://localhost:5000/api/health'; // Windows
 const API_URL_MAC  = 'http://localhost:5002/api/health'; // Mac
 
+// Log files written by start_mac.sh
+const LOG_FILES = IS_MAC ? {
+  api_server:    path.join(PROJECT_ROOT, 'mac', 'api_server.log'),
+  watch:         path.join(PROJECT_ROOT, 'mac', 'watch.log'),
+  client:        path.join(PROJECT_ROOT, 'mac', 'client.log'),
+  collate_data:  path.join(PROJECT_ROOT, 'mac', 'collate_data.log'),
+  run_activity:  path.join(PROJECT_ROOT, 'mac', 'run_activity.log'),
+  frontend:      path.join(PROJECT_ROOT, 'mac', 'frontend.log'),
+} : {};
+
 // ── Loading window ─────────────────────────────────────────────
 function createLoadingWindow() {
   loadingWindow = new BrowserWindow({
-    width: 480,
-    height: 340,
+    width: 520,
+    height: 420,
     resizable: false,
     frame: false,
     transparent: true,
@@ -42,7 +52,7 @@ function createLoadingWindow() {
   loadingWindow.loadFile(path.join(__dirname, 'loading.html'));
 }
 
-// ── Main window (wraps the Vite frontend) ─────────────────────
+// ── Main window ───────────────────────────────────────────────
 function createMainWindow() {
   mainWindow = new BrowserWindow({
     width: 1280,
@@ -72,14 +82,15 @@ function createMainWindow() {
   });
 }
 
-// ── Send status messages to the loading window ─────────────────
+// ── Status messages ────────────────────────────────────────────
 function sendStatus(message, progress) {
   if (loadingWindow && !loadingWindow.isDestroyed()) {
     loadingWindow.webContents.send('status', { message, progress });
   }
+  console.log(`[status ${progress ?? '?'}%] ${message}`);
 }
 
-// ── Poll until a URL responds ──────────────────────────────────
+// ── Poll until URL responds ────────────────────────────────────
 function waitForURL(url, timeoutMs = 120000) {
   return new Promise((resolve, reject) => {
     const start = Date.now();
@@ -90,7 +101,6 @@ function waitForURL(url, timeoutMs = 120000) {
           resolve();
         }
       }).on('error', () => {
-        // Not ready yet — keep polling
         if (Date.now() - start > timeoutMs) {
           clearInterval(interval);
           reject(new Error(`Timed out waiting for ${url}`));
@@ -100,13 +110,13 @@ function waitForURL(url, timeoutMs = 120000) {
   });
 }
 
-// ── Run the platform startup script ───────────────────────────
+// ── Run the startup script ─────────────────────────────────────
 function runStartScript() {
   return new Promise((resolve, reject) => {
     let proc;
+    let resolved = false;
 
     if (IS_MAC) {
-      // Make script executable then run it
       try { fs.chmodSync(SCRIPTS.mac, '755'); } catch (_) {}
       proc = spawn('bash', [SCRIPTS.mac], {
         cwd: PROJECT_ROOT,
@@ -127,34 +137,38 @@ function runStartScript() {
 
     runningProcesses.push(proc);
 
-    // Stream stdout → loading window status messages
     proc.stdout.on('data', (data) => {
       const lines = data.toString().split('\n').filter(Boolean);
       lines.forEach((line) => {
-        // Strip ANSI colour codes
         const clean = line.replace(/\x1b\[[0-9;]*m/g, '').trim();
-        if (clean) sendStatus(clean, null);
+        if (!clean) return;
+        console.log(`[script] ${clean}`);
+        sendStatus(clean, null);
+
+        // Resolve as soon as the script signals readiness
+        if (!resolved && clean.includes('All services running')) {
+          resolved = true;
+          resolve();
+        }
       });
     });
 
     proc.stderr.on('data', (data) => {
       const clean = data.toString().replace(/\x1b\[[0-9;]*m/g, '').trim();
-      if (clean) sendStatus(`⚠ ${clean}`, null);
-    });
-
-    proc.on('error', (err) => reject(err));
-
-    // The script runs indefinitely (it's a service launcher).
-    // We resolve as soon as it emits its "all services running" banner.
-    proc.stdout.on('data', (data) => {
-      if (data.toString().includes('All services running')) {
-        resolve();
+      if (clean) {
+        console.warn(`[script stderr] ${clean}`);
+        sendStatus(`⚠ ${clean}`, null);
       }
     });
 
-    // Fallback: if the process exits unexpectedly before we resolved
+    proc.on('error', (err) => {
+      if (!resolved) reject(err);
+    });
+
     proc.on('exit', (code) => {
-      if (code !== 0) reject(new Error(`Startup script exited with code ${code}`));
+      if (!resolved && code !== 0) {
+        reject(new Error(`Startup script exited with code ${code}`));
+      }
     });
   });
 }
@@ -163,7 +177,6 @@ function runStartScript() {
 function stopAllServices() {
   if (IS_WIN && fs.existsSync(SCRIPTS.stopWin)) {
     try {
-      // Run the stop script synchronously on exit
       const { execSync } = require('child_process');
       execSync(`cmd.exe /c "${SCRIPTS.stopWin}"`, { windowsHide: true, timeout: 10000 });
     } catch (_) {}
@@ -175,6 +188,18 @@ function stopAllServices() {
   runningProcesses = [];
 }
 
+// ── Read last N lines from a log file ─────────────────────────
+function readLogTail(filePath, lines = 100) {
+  try {
+    if (!fs.existsSync(filePath)) return `(log file not found: ${filePath})`;
+    const content = fs.readFileSync(filePath, 'utf8');
+    const all = content.split('\n');
+    return all.slice(-lines).join('\n');
+  } catch (e) {
+    return `(error reading log: ${e.message})`;
+  }
+}
+
 // ── App lifecycle ──────────────────────────────────────────────
 app.whenReady().then(async () => {
   createLoadingWindow();
@@ -182,17 +207,15 @@ app.whenReady().then(async () => {
   try {
     sendStatus('Starting ILGC services…', 5);
 
-    // Step 1 — run the startup script
     sendStatus('Launching backend services…', 15);
     const scriptPromise = runStartScript();
 
-    // Step 2 — wait for the script to announce readiness OR
-    //           fall back to polling the API
     sendStatus('Waiting for backend API…', 40);
     const apiURL = IS_MAC ? API_URL_MAC : API_URL;
 
+    // Race: either the script signals ready, or we poll the API
     await Promise.race([
-      scriptPromise.catch(() => {}),          // may never resolve on its own
+      scriptPromise.catch(() => {}),
       waitForURL(apiURL, 90000),
     ]);
 
@@ -200,15 +223,13 @@ app.whenReady().then(async () => {
     await waitForURL(FRONTEND_URL, 60000);
 
     sendStatus('Almost there…', 90);
-    await new Promise((r) => setTimeout(r, 800)); // brief pause looks polished
+    await new Promise((r) => setTimeout(r, 800));
 
     sendStatus('Done!', 100);
     createMainWindow();
 
   } catch (err) {
     sendStatus(`Error: ${err.message}`, null);
-    // Keep the loading window open so the user can read the error.
-    // A "Quit" button in loading.html can call window.close().
     console.error('Startup failed:', err);
   }
 });
@@ -231,3 +252,30 @@ ipcMain.on('quit-app', () => {
 });
 
 ipcMain.on('open-external', (_, url) => shell.openExternal(url));
+
+// Return list of available log files
+ipcMain.handle('get-log-names', () => {
+  return Object.keys(LOG_FILES);
+});
+
+// Return tail of a specific log file
+ipcMain.handle('get-log', (_, name) => {
+  const filePath = LOG_FILES[name];
+  if (!filePath) return `Unknown log: ${name}`;
+  return readLogTail(filePath, 200);
+});
+
+// Return health check from API
+ipcMain.handle('get-health', async () => {
+  const apiURL = IS_MAC ? API_URL_MAC : API_URL;
+  return new Promise((resolve) => {
+    http.get(apiURL, (res) => {
+      let body = '';
+      res.on('data', (chunk) => body += chunk);
+      res.on('end', () => {
+        try { resolve({ ok: true, data: JSON.parse(body) }); }
+        catch { resolve({ ok: true, data: body }); }
+      });
+    }).on('error', (e) => resolve({ ok: false, error: e.message }));
+  });
+});

@@ -1,12 +1,5 @@
 #!/bin/bash
 
-# ─────────────────────────────────────────────────────────────
-# ILGC Mac Launcher
-# Installs Homebrew, Python 3.12, Node.js, ActivityWatch,
-# sets up venv, then starts all services in one script.
-# Press Ctrl+C to stop everything cleanly.
-# ─────────────────────────────────────────────────────────────
-
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MAC_DIR="$SCRIPT_DIR/mac"
 SRC_DIR="$MAC_DIR/src"
@@ -18,10 +11,10 @@ PYTHON="$VENV/bin/python3"
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
 CYAN='\033[0;36m'; BOLD='\033[1m'; RESET='\033[0m'
 
-log()  { echo -e "${CYAN}[ILGC]${RESET} $1"; }
-ok()   { echo -e "${GREEN}[ILGC]${RESET} $1"; }
-warn() { echo -e "${YELLOW}[ILGC]${RESET} $1"; }
-err()  { echo -e "${RED}[ILGC]${RESET} $1"; }
+log()  { echo "[ILGC] $1"; }
+ok()   { echo "[ILGC-OK] $1"; }
+warn() { echo "[ILGC-WARN] $1"; }
+err()  { echo "[ILGC-ERROR] $1"; }
 
 declare -a PIDS
 
@@ -42,215 +35,177 @@ cleanup() {
   pkill -9 -f "aw-qt"      2>/dev/null || true
   pkill -9 -f "aw-server"  2>/dev/null || true
   pkill -9 -f "aw-watcher" 2>/dev/null || true
-  ok "All services stopped. Goodbye!"
+  ok "All services stopped."
   exit 0
 }
 
 trap cleanup SIGINT SIGTERM SIGHUP EXIT
 
 echo ""
-echo -e "${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
-echo -e "${BOLD}   ILGC Workplace & Distraction Monitor — Mac      ${RESET}"
-echo -e "${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+echo "ILGC Workplace and Distraction Monitor - Mac"
 echo ""
 
-# ─────────────────────────────────────────────────────────────
-# STEP 1 — Homebrew
-# ─────────────────────────────────────────────────────────────
+# STEP 1 - Homebrew
+log "Checking Homebrew..."
 if ! command -v brew &>/dev/null; then
-  log "Homebrew not found. Installing Homebrew..."
+  log "Installing Homebrew..."
   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-  if [ -f "/opt/homebrew/bin/brew" ]; then
-    eval "$(/opt/homebrew/bin/brew shellenv)"
-  elif [ -f "/usr/local/bin/brew" ]; then
-    eval "$(/usr/local/bin/brew shellenv)"
-  fi
-  ok "Homebrew installed."
-else
-  ok "Homebrew found."
 fi
-
 if [ -f "/opt/homebrew/bin/brew" ]; then
   eval "$(/opt/homebrew/bin/brew shellenv)"
 elif [ -f "/usr/local/bin/brew" ]; then
   eval "$(/usr/local/bin/brew shellenv)"
 fi
+ok "Homebrew ready"
 
-# ─────────────────────────────────────────────────────────────
-# STEP 2 — Python 3.12
-# ─────────────────────────────────────────────────────────────
+# STEP 2 - Python 3.12
+log "Checking Python 3.12..."
 if ! command -v python3.12 &>/dev/null; then
-  log "Python 3.12 not found. Installing via Homebrew..."
+  log "Installing Python 3.12..."
   brew install python@3.12
   export PATH="$(brew --prefix python@3.12)/bin:$PATH"
-  ok "Python 3.12 installed."
-else
-  ok "Python 3.12 found: $(python3.12 --version)"
 fi
 PYTHON312="$(command -v python3.12)"
+ok "Python 3.12 ready: $(python3.12 --version)"
 
-# ─────────────────────────────────────────────────────────────
-# STEP 3 — Node.js
-# ─────────────────────────────────────────────────────────────
+# STEP 3 - Node.js
+log "Checking Node.js..."
 if ! command -v node &>/dev/null; then
-  log "Node.js not found. Installing via Homebrew..."
+  log "Installing Node.js..."
   brew install node
-  ok "Node.js installed: $(node --version)"
-else
-  ok "Node.js found: $(node --version)"
 fi
+ok "Node.js ready: $(node --version)"
 
-if ! command -v npm &>/dev/null; then
-  err "npm still not found after Node.js install. Please restart the script."
-  exit 1
-fi
-
-# ─────────────────────────────────────────────────────────────
-# STEP 4 — ActivityWatch (via utils/mac.sh)
-# ─────────────────────────────────────────────────────────────
+# STEP 4 - ActivityWatch
 AW_SCRIPT="$UTILS_DIR/mac.sh"
-
 if [ ! -f "$AW_SCRIPT" ]; then
   err "utils/mac.sh not found at $AW_SCRIPT"
   exit 1
 fi
-
-log "Running utils/mac.sh for ActivityWatch setup and launch..."
+log "Launching ActivityWatch..."
 chmod +x "$AW_SCRIPT"
 bash "$AW_SCRIPT" &
 AW_PID=$!
 PIDS+=("$AW_PID")
-ok "ActivityWatch launched via mac.sh (PID $AW_PID)"
-sleep 5  # give AW time to fully start before proceeding
+ok "ActivityWatch launched (PID $AW_PID)"
+sleep 5
 
-# ─────────────────────────────────────────────────────────────
-# STEP 5 — Check mac/ directory
-# ─────────────────────────────────────────────────────────────
+# STEP 5 - Check mac/ directory
 if [ ! -d "$MAC_DIR" ]; then
   err "Could not find 'mac/' directory at: $MAC_DIR"
-  err "Make sure you run this script from the project root."
   exit 1
 fi
 
-# ─────────────────────────────────────────────────────────────
-# STEP 6 — Virtual environment (mac/.ilgc)
-# ─────────────────────────────────────────────────────────────
+# STEP 6 - Virtual environment
+log "Checking virtual environment..."
 if [ ! -f "$PYTHON" ]; then
-  log "Creating .ilgc venv with Python 3.12..."
+  log "Creating .ilgc venv..."
   "$PYTHON312" -m venv "$VENV"
-  ok "Virtual environment created."
-else
-  ok "Virtual environment found."
 fi
+ok "Virtual environment ready"
 
-# ─────────────────────────────────────────────────────────────
-# STEP 7 — Python dependencies (mac/requirements.txt)
-# ─────────────────────────────────────────────────────────────
+# STEP 7 - Python dependencies
 REQUIREMENTS="$MAC_DIR/requirements.txt"
 if [ ! -f "$REQUIREMENTS" ]; then
   err "requirements.txt not found at $REQUIREMENTS"
   exit 1
 fi
 
+log "Checking Python dependencies..."
 if ! "$PYTHON" -c "import flask" 2>/dev/null; then
   log "Installing Python dependencies..."
   "$PYTHON" -m pip install --upgrade pip --quiet
   "$PYTHON" -m pip install -r "$REQUIREMENTS" --quiet
-  ok "Python dependencies installed."
-else
-  ok "Python dependencies already installed."
 fi
+ok "Python dependencies ready"
 
 # Copy pylsl lib files if present
 PYLSL_LIB="$MAC_DIR/lib/pylsl"
 PYLSL_DEST_DYNAMIC=$("$PYTHON" -c "import pylsl, os; print(os.path.join(os.path.dirname(pylsl.__file__), 'lib'))" 2>/dev/null || true)
 if [ -d "$PYLSL_LIB" ] && [ -n "$PYLSL_DEST_DYNAMIC" ] && [ -d "$PYLSL_DEST_DYNAMIC" ]; then
-  log "Copying pylsl lib files..."
   cp -r "$PYLSL_LIB/"* "$PYLSL_DEST_DYNAMIC/" 2>/dev/null || true
-  ok "pylsl lib files copied."
 fi
 
-# ─────────────────────────────────────────────────────────────
-# STEP 8 — Frontend dependencies
-# ─────────────────────────────────────────────────────────────
+# STEP 8 - Frontend dependencies
+log "Checking frontend dependencies..."
 if [ ! -d "$FRONTEND_DIR/node_modules" ]; then
-  log "Installing frontend dependencies (first run)..."
+  log "Installing frontend dependencies..."
   cd "$FRONTEND_DIR" && npm install --silent
-  ok "Frontend dependencies installed."
   cd "$SCRIPT_DIR"
 fi
+ok "Frontend dependencies ready"
 
-# ─────────────────────────────────────────────────────────────
-# STEP 9 — Start Python backend services
-# ─────────────────────────────────────────────────────────────
-
-# api_server.py — mac/
+# STEP 9 - Start Python backend services
 log "Starting api_server.py..."
 cd "$MAC_DIR"
-"$PYTHON" api_server.py &
+"$PYTHON" api_server.py >> "$MAC_DIR/api_server.log" 2>&1 &
 PID=$!; PIDS+=("$PID")
 ok "api_server.py started (PID $PID)"
-sleep 1
+sleep 2
 
-# watch.py — mac/src/
 log "Starting watch.py..."
 cd "$SRC_DIR"
-"$PYTHON" watch.py &
+"$PYTHON" watch.py >> "$MAC_DIR/watch.log" 2>&1 &
 PID=$!; PIDS+=("$PID")
 ok "watch.py started (PID $PID)"
 sleep 1
 
-# client.py — mac/src/
 log "Starting client.py..."
 cd "$SRC_DIR"
-"$PYTHON" client.py &
+"$PYTHON" client.py >> "$MAC_DIR/client.log" 2>&1 &
 PID=$!; PIDS+=("$PID")
 ok "client.py started (PID $PID)"
 sleep 1
 
-# collate_data.py — mac/src/
 log "Starting collate_data.py..."
 cd "$SRC_DIR"
-"$PYTHON" collate_data.py &
+"$PYTHON" collate_data.py >> "$MAC_DIR/collate_data.log" 2>&1 &
 PID=$!; PIDS+=("$PID")
 ok "collate_data.py started (PID $PID)"
 sleep 1
 
-# run_activity.py — run from mac/src/ so activity.json lands at
-# mac/src/activityTracker/activity.json (where collate_data.py reads it)
 if [ -f "$UTILS_DIR/run_activity.py" ]; then
   log "Starting run_activity.py..."
   cd "$SRC_DIR"
-  "$PYTHON" "$UTILS_DIR/run_activity.py" &
+  "$PYTHON" "$UTILS_DIR/run_activity.py" >> "$MAC_DIR/run_activity.log" 2>&1 &
   PID=$!; PIDS+=("$PID")
   ok "run_activity.py started (PID $PID)"
   sleep 1
-else
-  warn "run_activity.py not found at $UTILS_DIR — skipping."
 fi
 
-# ─────────────────────────────────────────────────────────────
-# STEP 11 — Start frontend
-# ─────────────────────────────────────────────────────────────
+# STEP 10 - Start frontend
 log "Starting frontend (Vite)..."
 cd "$FRONTEND_DIR"
-npm run dev &
+npm run dev >> "$MAC_DIR/frontend.log" 2>&1 &
 PID=$!; PIDS+=("$PID")
 ok "Frontend started (PID $PID)"
 
-# ─────────────────────────────────────────────────────────────
-# Done
-# ─────────────────────────────────────────────────────────────
+# Wait for API to be ready
+log "Waiting for API server to be ready..."
+MAX_WAIT=60
+COUNT=0
+while [ $COUNT -lt $MAX_WAIT ]; do
+  if curl -s http://localhost:5002/api/health > /dev/null 2>&1; then
+    ok "API server is ready"
+    break
+  fi
+  sleep 1
+  COUNT=$((COUNT + 1))
+done
+
+if [ $COUNT -ge $MAX_WAIT ]; then
+  err "API server did not start within ${MAX_WAIT} seconds"
+fi
+
+# This exact string is what electron/main.js listens for
+echo "All services running"
+
 echo ""
-echo -e "${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
-ok "All services running!"
+echo "API server    -> http://localhost:5002"
+echo "Frontend      -> http://localhost:8080"
+echo "ActivityWatch -> http://localhost:5600"
 echo ""
-echo -e "  ${CYAN}API server${RESET}    → http://localhost:5002"
-echo -e "  ${CYAN}Frontend${RESET}      → http://localhost:8080"
-echo -e "  ${CYAN}ActivityWatch${RESET} → http://localhost:5600"
-echo ""
-echo -e "  Press ${BOLD}Ctrl+C${RESET} to stop everything."
-echo -e "${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+echo "Press Ctrl+C to stop everything."
 echo ""
 
 wait

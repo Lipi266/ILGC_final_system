@@ -5,18 +5,16 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ILGC — Starting…</title>
   <style>
-    /* ── Reset & base ───────────────────────────────────────── */
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     html, body {
       width: 100%; height: 100%;
       background: transparent;
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-      -webkit-app-region: drag;        /* make the frameless window draggable */
+      -webkit-app-region: drag;
       user-select: none;
     }
 
-    /* ── Card ───────────────────────────────────────────────── */
     .card {
       width: 100%; height: 100%;
       background: #ffffff;
@@ -26,11 +24,10 @@
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      gap: 24px;
-      padding: 40px 48px;
+      gap: 20px;
+      padding: 36px 48px;
     }
 
-    /* ── Logo / icon ────────────────────────────────────────── */
     .icon-wrap {
       width: 64px; height: 64px;
       background: hsl(210 100% 50% / .1);
@@ -39,7 +36,6 @@
     }
     .icon-wrap svg { width: 32px; height: 32px; }
 
-    /* ── Title ──────────────────────────────────────────────── */
     h1 {
       font-size: 20px;
       font-weight: 600;
@@ -47,7 +43,6 @@
       letter-spacing: -.3px;
     }
 
-    /* ── Spinner ────────────────────────────────────────────── */
     .spinner {
       width: 36px; height: 36px;
       border: 3px solid hsl(210 100% 50% / .15);
@@ -57,7 +52,6 @@
     }
     @keyframes spin { to { transform: rotate(360deg); } }
 
-    /* ── Progress bar ───────────────────────────────────────── */
     .progress-track {
       width: 100%;
       height: 4px;
@@ -73,48 +67,73 @@
       transition: width .4s ease;
     }
 
-    /* ── Status text ────────────────────────────────────────── */
     .status {
       font-size: 13px;
       color: #666;
       text-align: center;
       min-height: 18px;
-      max-width: 340px;
+      max-width: 380px;
       line-height: 1.4;
-
-      /* truncate very long lines from script output */
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
     }
 
-    /* ── Quit button (shown on error) ───────────────────────── */
-    .quit-btn {
-      display: none;
-      margin-top: 8px;
-      padding: 8px 24px;
-      font-size: 13px;
-      color: #fff;
-      background: #e53e3e;
-      border: none;
-      border-radius: 8px;
-      cursor: pointer;
+    .btn-row {
+      display: flex;
+      gap: 8px;
       -webkit-app-region: no-drag;
     }
-    .quit-btn:hover { background: #c53030; }
-    .quit-btn.visible { display: inline-block; }
 
-    /* ── "Done" state ───────────────────────────────────────── */
+    .btn {
+      display: none;
+      padding: 7px 20px;
+      font-size: 12px;
+      border-radius: 8px;
+      border: none;
+      cursor: pointer;
+    }
+    .btn.visible { display: inline-block; }
+
+    .quit-btn {
+      color: #fff;
+      background: #e53e3e;
+    }
+    .quit-btn:hover { background: #c53030; }
+
+    .debug-btn {
+      color: #fff;
+      background: #3b82f6;
+    }
+    .debug-btn:hover { background: #2563eb; }
+
+    /* Always-visible small debug link */
+    .debug-link {
+      font-size: 11px;
+      color: #bbb;
+      text-decoration: underline;
+      cursor: pointer;
+      -webkit-app-region: no-drag;
+      background: none;
+      border: none;
+      padding: 0;
+    }
+    .debug-link:hover { color: #888; }
+
     .spinner.done {
       border-color: hsl(142 71% 45%);
       border-top-color: hsl(142 71% 45%);
+      animation: none;
+    }
+    .spinner.error {
+      border-color: #e53e3e;
+      border-top-color: #e53e3e;
       animation: none;
     }
   </style>
 </head>
 <body>
   <div class="card">
-    <!-- Brain icon (inline SVG — no external deps) -->
     <div class="icon-wrap">
       <svg viewBox="0 0 24 24" fill="none" stroke="hsl(210 100% 50%)"
            stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
@@ -133,9 +152,16 @@
 
     <p class="status" id="statusText">Initialising…</p>
 
-    <button class="quit-btn" id="quitBtn" onclick="window.ilgc.quit()">
-      Quit
-    </button>
+    <div class="btn-row">
+      <button class="btn quit-btn" id="quitBtn" onclick="window.ilgc.quit()">
+        Quit
+      </button>
+      <button class="btn debug-btn" id="debugBtnBig" onclick="openDebug()">
+        View Logs
+      </button>
+    </div>
+
+    <button class="debug-link" onclick="openDebug()">View service logs</button>
   </div>
 
   <script>
@@ -143,26 +169,28 @@
     const fillEl     = document.getElementById('progressFill');
     const spinnerEl  = document.getElementById('spinner');
     const quitBtn    = document.getElementById('quitBtn');
+    const debugBtnBig = document.getElementById('debugBtnBig');
+
+    function openDebug() {
+      window.ilgc.openExternal('http://localhost:5002/api/health').catch(() => {});
+      // Signal main process to open the debug window
+      window.ilgc.openDebug && window.ilgc.openDebug();
+    }
 
     window.ilgc.onStatus(({ message, progress }) => {
-      // Update status text
       statusEl.textContent = message;
-      statusEl.title = message;   // full text on hover
+      statusEl.title = message;
 
-      // Update progress bar if a value was supplied
       if (progress !== null && progress !== undefined) {
         fillEl.style.width = `${progress}%`;
       }
 
-      // Error state: show quit button
       if (message.startsWith('Error:')) {
-        spinnerEl.style.borderColor = '#e53e3e';
-        spinnerEl.style.borderTopColor = '#e53e3e';
-        spinnerEl.style.animation = 'none';
+        spinnerEl.classList.add('error');
         quitBtn.classList.add('visible');
+        debugBtnBig.classList.add('visible');
       }
 
-      // Done state: turn spinner green briefly
       if (progress === 100) {
         spinnerEl.classList.add('done');
       }
