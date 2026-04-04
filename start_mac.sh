@@ -8,9 +8,13 @@ FRONTEND_DIR="$MAC_DIR/frontend"
 APP_NAME="ILGC Research"
 APP_SUPPORT_DIR="$HOME/Library/Application Support/$APP_NAME"
 APP_LOG_DIR="$HOME/Library/Logs/$APP_NAME"
+APP_DATA_DIR="$APP_SUPPORT_DIR/data"
+APP_DATA_LOG_DIR="$APP_DATA_DIR/logs"
+SERVICE_LOG_DIR="$APP_DATA_LOG_DIR/services"
 VENV="$APP_SUPPORT_DIR/venvs/mac"
 PYTHON="$VENV/bin/python3"
-PIP_LOG="$APP_LOG_DIR/pip_install.log"
+PIP_LOG="$APP_DATA_LOG_DIR/pip_install.log"
+AW_BOOTSTRAP_LOG="$APP_DATA_LOG_DIR/activitywatch_bootstrap.log"
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
 CYAN='\033[0;36m'; BOLD='\033[1m'; RESET='\033[0m'
@@ -19,6 +23,42 @@ log()  { echo "[ILGC] $1"; }
 ok()   { echo "[ILGC-OK] $1"; }
 warn() { echo "[ILGC-WARN] $1"; }
 err()  { echo "[ILGC-ERROR] $1"; }
+
+ensure_linked_dir() {
+  local link_path="$1"
+  local target_path="$2"
+  local backup_path
+
+  mkdir -p "$target_path"
+  mkdir -p "$(dirname "$link_path")"
+
+  if [ -L "$link_path" ]; then
+    local current_target
+    current_target="$(readlink "$link_path")"
+    if [ "$current_target" != "$target_path" ]; then
+      rm -f "$link_path"
+      ln -s "$target_path" "$link_path"
+    fi
+    return
+  fi
+
+  if [ -d "$link_path" ]; then
+    if [ -n "$(ls -A "$link_path" 2>/dev/null)" ]; then
+      cp -a "$link_path"/. "$target_path"/ 2>/dev/null || true
+    fi
+    backup_path="${link_path}.legacy_$(date +%Y%m%d_%H%M%S)"
+    mv "$link_path" "$backup_path"
+    ln -s "$target_path" "$link_path"
+    return
+  fi
+
+  if [ -e "$link_path" ]; then
+    backup_path="${link_path}.legacy_$(date +%Y%m%d_%H%M%S)"
+    mv "$link_path" "$backup_path"
+  fi
+
+  ln -s "$target_path" "$link_path"
+}
 
 declare -a PIDS
 
@@ -50,10 +90,12 @@ echo "ILGC Workplace and Distraction Monitor - Mac"
 echo ""
 
 # Ensure per-user runtime directories exist (safe in packaged apps and across devices)
-mkdir -p "$APP_SUPPORT_DIR" "$APP_LOG_DIR"
+mkdir -p "$APP_SUPPORT_DIR" "$APP_LOG_DIR" "$APP_DATA_DIR" "$APP_DATA_LOG_DIR" "$SERVICE_LOG_DIR"
 ok "Runtime directories ready"
 log "App support dir: $APP_SUPPORT_DIR"
 log "App logs dir: $APP_LOG_DIR"
+log "Unified data dir: $APP_DATA_DIR"
+log "Unified logs dir: $APP_DATA_LOG_DIR"
 log "Python venv dir: $VENV"
 
 # STEP 1 - Homebrew
@@ -95,7 +137,7 @@ if [ ! -f "$AW_SCRIPT" ]; then
 fi
 log "Launching ActivityWatch..."
 chmod +x "$AW_SCRIPT"
-bash "$AW_SCRIPT" &
+bash "$AW_SCRIPT" >> "$AW_BOOTSTRAP_LOG" 2>&1 &
 AW_PID=$!
 PIDS+=("$AW_PID")
 ok "ActivityWatch launched (PID $AW_PID)"
@@ -106,6 +148,22 @@ if [ ! -d "$MAC_DIR" ]; then
   err "Could not find 'mac/' directory at: $MAC_DIR"
   exit 1
 fi
+
+# STEP 5.1 - Route all generated data into one folder
+log "Linking data folders to unified storage..."
+ensure_linked_dir "$MAC_DIR/details" "$APP_DATA_DIR/details"
+ensure_linked_dir "$MAC_DIR/feedback" "$APP_DATA_DIR/feedback"
+ensure_linked_dir "$MAC_DIR/interventions" "$APP_DATA_DIR/interventions"
+ensure_linked_dir "$MAC_DIR/collated" "$APP_DATA_DIR/collated"
+ensure_linked_dir "$MAC_DIR/logs" "$APP_DATA_DIR/logs_legacy"
+ensure_linked_dir "$MAC_DIR/screenshot" "$APP_DATA_DIR/screenshot"
+
+ensure_linked_dir "$SRC_DIR/watch" "$APP_DATA_DIR/watch"
+ensure_linked_dir "$SRC_DIR/screenshot" "$APP_DATA_DIR/screenshot"
+ensure_linked_dir "$SRC_DIR/activityTracker" "$APP_DATA_DIR/activityTracker"
+ensure_linked_dir "$SRC_DIR/interventions" "$APP_DATA_DIR/interventions"
+ensure_linked_dir "$SRC_DIR/details" "$APP_DATA_DIR/details"
+ok "Unified data storage is ready"
 
 # STEP 6 - Virtual environment
 log "Checking virtual environment..."
@@ -165,7 +223,7 @@ ok "Frontend dependencies ready"
 # STEP 9 - Start Python backend services
 log "Starting watch.py first..."
 cd "$SRC_DIR"
-"$PYTHON" watch.py >> "$MAC_DIR/watch.log" 2>&1 &
+"$PYTHON" watch.py >> "$SERVICE_LOG_DIR/watch.log" 2>&1 &
 PID=$!; PIDS+=("$PID")
 ok "watch.py started (PID $PID)"
 sleep 2
@@ -175,7 +233,7 @@ log "Waiting for watch data readiness..."
 WATCH_READY_TIMEOUT=90
 WATCH_READY_COUNT=0
 while [ $WATCH_READY_COUNT -lt $WATCH_READY_TIMEOUT ]; do
-  if "$PYTHON" - <<'PY' "$SRC_DIR/watch/watch_data.json"
+  if "$PYTHON" - <<'PY' "$APP_DATA_DIR/watch/watch_data.json"
 import json
 import sys
 
@@ -210,21 +268,21 @@ fi
 
 log "Starting api_server.py..."
 cd "$MAC_DIR"
-"$PYTHON" api_server.py >> "$MAC_DIR/api_server.log" 2>&1 &
+"$PYTHON" api_server.py >> "$SERVICE_LOG_DIR/api_server.log" 2>&1 &
 PID=$!; PIDS+=("$PID")
 ok "api_server.py started (PID $PID)"
 sleep 2
 
 log "Starting client.py..."
 cd "$SRC_DIR"
-"$PYTHON" client.py >> "$MAC_DIR/client.log" 2>&1 &
+"$PYTHON" client.py >> "$SERVICE_LOG_DIR/client.log" 2>&1 &
 PID=$!; PIDS+=("$PID")
 ok "client.py started (PID $PID)"
 sleep 1
 
 log "Starting collate_data.py..."
 cd "$SRC_DIR"
-"$PYTHON" collate_data.py >> "$MAC_DIR/collate_data.log" 2>&1 &
+"$PYTHON" collate_data.py >> "$SERVICE_LOG_DIR/collate_data.log" 2>&1 &
 PID=$!; PIDS+=("$PID")
 ok "collate_data.py started (PID $PID)"
 sleep 1
@@ -232,7 +290,7 @@ sleep 1
 if [ -f "$UTILS_DIR/run_activity.py" ]; then
   log "Starting run_activity.py..."
   cd "$SRC_DIR"
-  "$PYTHON" "$UTILS_DIR/run_activity.py" >> "$MAC_DIR/run_activity.log" 2>&1 &
+  "$PYTHON" "$UTILS_DIR/run_activity.py" >> "$SERVICE_LOG_DIR/run_activity.log" 2>&1 &
   PID=$!; PIDS+=("$PID")
   ok "run_activity.py started (PID $PID)"
   sleep 1
@@ -241,7 +299,7 @@ fi
 # STEP 10 - Start frontend
 log "Starting frontend (Vite)..."
 cd "$FRONTEND_DIR"
-npm run dev >> "$MAC_DIR/frontend.log" 2>&1 &
+npm run dev >> "$SERVICE_LOG_DIR/frontend.log" 2>&1 &
 PID=$!; PIDS+=("$PID")
 ok "Frontend started (PID $PID)"
 
@@ -269,6 +327,8 @@ echo ""
 echo "API server    -> http://localhost:5002"
 echo "Frontend      -> http://localhost:8080"
 echo "ActivityWatch -> http://localhost:5600"
+echo "Data folder   -> $APP_DATA_DIR"
+echo "Service logs  -> $SERVICE_LOG_DIR"
 echo ""
 echo "Press Ctrl+C to stop everything."
 echo ""
