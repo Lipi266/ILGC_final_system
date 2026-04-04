@@ -639,9 +639,15 @@ async def main():
         print("This will establish a baseline for your heart rate metrics.")
         print("It will take about 60 seconds. Please remain still and relaxed.")
         
-        # Wait for user input or automated input from the parent process
-        print("Press Enter to start calibration: ", end="", flush=True)
-        input()  # This will receive input from either the user or the parent process
+        # In packaged/background launches stdin is non-interactive; auto-start calibration.
+        if sys.stdin and sys.stdin.isatty():
+            print("Press Enter to start calibration: ", end="", flush=True)
+            try:
+                input()
+            except EOFError:
+                print("No interactive input available, starting calibration automatically.")
+        else:
+            print("Starting calibration automatically (no interactive terminal).")
         
         # Wait for baseline calibration to complete
         logger.info("Starting baseline calibration...")
