@@ -11,6 +11,7 @@ python -m pip install requests (in venv)
 import json
 import os
 import signal
+import sys
 import time
 from datetime import datetime, timezone
 
@@ -106,30 +107,51 @@ def main():
     # Clear any data from previous runs
     clear_and_init()
 
-    # Wait for watchers to be available
-    print("Waiting for ActivityWatch watchers to start...")
-    max_retries = 30
-    retry_count = 0
+    # ── Wait for AW server to be reachable ────────────────────────
+    print("Waiting for ActivityWatch server to be reachable...")
+    server_max_wait = 120   # seconds – packaged apps take longer to boot AW
+    server_waited  = 0
+    while server_waited < server_max_wait:
+        buckets = _get("/buckets")
+        if buckets is not None:
+            print(f"  AW server reachable after {server_waited}s")
+            break
+        time.sleep(2)
+        server_waited += 2
+        if not RUNNING:
+            return
+    else:
+        print("[error] AW server never became reachable. Exiting.")
+        sys.exit(1)
+
+    # ── Wait for watchers to register their buckets ───────────────
+    # In a packaged DMG the watchers can take 30-90 s to start and
+    # register buckets with the server, so we wait generously.
+    print("Waiting for window/AFK watchers to register buckets...")
+    watcher_max_wait = 180   # seconds
+    watcher_waited   = 0
     win_bucket = None
     afk_bucket = None
-    
-    while (not win_bucket and not afk_bucket) and retry_count < max_retries:
+
+    while watcher_waited < watcher_max_wait:
         win_bucket = find_bucket("aw-watcher-window_")
         afk_bucket = find_bucket("aw-watcher-afk_")
-        if not win_bucket and not afk_bucket:
-            retry_count += 1
-            print(f"  Watchers not found yet... retrying ({retry_count}/{max_retries})")
-            time.sleep(1)
-        else:
+        if win_bucket or afk_bucket:
+            print(f"  Watcher bucket(s) found after {watcher_waited}s")
             break
+        time.sleep(3)
+        watcher_waited += 3
+        if not RUNNING:
+            return
+        if watcher_waited % 30 == 0:
+            print(f"  Still waiting for buckets... ({watcher_waited}s elapsed)")
 
     print(f"Window bucket : {win_bucket or '(not found)'}")
     print(f"AFK bucket    : {afk_bucket or '(not found)'}\n")
 
     if not win_bucket and not afk_bucket:
-        print("[error] No buckets found after waiting. Is ActivityWatch running?")
-        print("[error] Try restarting ActivityWatch or check permissions.")
-        return
+        print("[warn] No watcher buckets found after waiting. Will still poll and write 'Unknown' entries.")
+        # Don't exit – keep running so collate_data has *something* to read
 
     chunks = []
 
@@ -166,6 +188,12 @@ def main():
 
     while RUNNING:
         now = datetime.now(timezone.utc).isoformat()
+
+        # Re-discover buckets if they appeared late
+        if not win_bucket:
+            win_bucket = find_bucket("aw-watcher-window_")
+        if not afk_bucket:
+            afk_bucket = find_bucket("aw-watcher-afk_")
 
         # Only fetch events that happened after this script started
         win_ev = latest_event(win_bucket, session_start) if win_bucket else None

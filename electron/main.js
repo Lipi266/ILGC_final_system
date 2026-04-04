@@ -2,13 +2,14 @@ const { app, BrowserWindow, ipcMain, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
-const { spawn } = require('child_process');
+const { spawn, execSync } = require('child_process');
 
 const IS_MAC = process.platform === 'darwin';
 const IS_WIN = process.platform === 'win32';
 
 let loadingWindow = null;
 let mainWindow = null;
+let debugWindow = null;
 let runningProcesses = [];
 
 const PROJECT_ROOT = app.isPackaged
@@ -25,14 +26,23 @@ const FRONTEND_URL = 'http://localhost:8080';
 const API_URL      = 'http://localhost:5000/api/health'; // Windows
 const API_URL_MAC  = 'http://localhost:5002/api/health'; // Mac
 
+// PID file written by start_mac.sh so we can kill all grandchildren
+const PID_FILE = IS_MAC
+  ? path.join(
+      process.env.HOME,
+      'Library', 'Application Support', 'ILGC Research',
+      'data', 'ilgc_pids.txt'
+    )
+  : null;
+
 // Log files written by start_mac.sh
 const LOG_FILES = IS_MAC ? {
-  api_server:    path.join(PROJECT_ROOT, 'mac', 'api_server.log'),
-  watch:         path.join(PROJECT_ROOT, 'mac', 'watch.log'),
-  client:        path.join(PROJECT_ROOT, 'mac', 'client.log'),
-  collate_data:  path.join(PROJECT_ROOT, 'mac', 'collate_data.log'),
-  run_activity:  path.join(PROJECT_ROOT, 'mac', 'run_activity.log'),
-  frontend:      path.join(PROJECT_ROOT, 'mac', 'frontend.log'),
+  api_server:    path.join(process.env.HOME, 'Library', 'Application Support', 'ILGC Research', 'data', 'logs', 'services', 'api_server.log'),
+  watch:         path.join(process.env.HOME, 'Library', 'Application Support', 'ILGC Research', 'data', 'logs', 'services', 'watch.log'),
+  client:        path.join(process.env.HOME, 'Library', 'Application Support', 'ILGC Research', 'data', 'logs', 'services', 'client.log'),
+  collate_data:  path.join(process.env.HOME, 'Library', 'Application Support', 'ILGC Research', 'data', 'logs', 'services', 'collate_data.log'),
+  run_activity:  path.join(process.env.HOME, 'Library', 'Application Support', 'ILGC Research', 'data', 'logs', 'services', 'run_activity.log'),
+  frontend:      path.join(process.env.HOME, 'Library', 'Application Support', 'ILGC Research', 'data', 'logs', 'services', 'frontend.log'),
 } : {};
 
 // ── Loading window ─────────────────────────────────────────────
@@ -80,6 +90,25 @@ function createMainWindow() {
     mainWindow = null;
     stopAllServices();
   });
+}
+
+// ── Debug window ──────────────────────────────────────────────
+function createDebugWindow() {
+  if (debugWindow && !debugWindow.isDestroyed()) {
+    debugWindow.focus();
+    return;
+  }
+  debugWindow = new BrowserWindow({
+    width: 900,
+    height: 600,
+    title: 'ILGC Debug Logs',
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+    },
+  });
+  debugWindow.loadFile(path.join(__dirname, 'debug.html'));
+  debugWindow.on('closed', () => { debugWindow = null; });
 }
 
 // ── Status messages ────────────────────────────────────────────
@@ -145,7 +174,6 @@ function runStartScript() {
         console.log(`[script] ${clean}`);
         sendStatus(clean, null);
 
-        // Resolve as soon as the script signals readiness
         if (!resolved && clean.includes('All services running')) {
           resolved = true;
           resolve();
@@ -175,21 +203,61 @@ function runStartScript() {
 
 // ── Kill everything on quit ────────────────────────────────────
 function stopAllServices() {
+  console.log('[cleanup] Stopping all services...');
+
+  // 1. Ask the API to stop interventions cleanly first
+  try {
+    const apiURL = IS_MAC ? 'http://localhost:5002' : 'http://localhost:5000';
+    http.get(`${apiURL}/api/stop-interventions`, () => {}).on('error', () => {});
+  } catch (_) {}
+
+  // 2. Kill processes tracked by PID file (includes grandchildren like interventions.py)
+  if (IS_MAC && PID_FILE && fs.existsSync(PID_FILE)) {
+    try {
+      const pids = fs.readFileSync(PID_FILE, 'utf8')
+        .split('\n')
+        .map(s => s.trim())
+        .filter(Boolean);
+      for (const pid of pids) {
+        try { execSync(`kill -TERM -- -${pid} 2>/dev/null || kill -TERM ${pid} 2>/dev/null || true`); } catch (_) {}
+      }
+      setTimeout(() => {
+        for (const pid of pids) {
+          try { execSync(`kill -KILL -- -${pid} 2>/dev/null || kill -KILL ${pid} 2>/dev/null || true`); } catch (_) {}
+        }
+      }, 2000);
+    } catch (_) {}
+  }
+
+  // 3. Kill by script name to catch any stragglers
+  if (IS_MAC) {
+    const scripts = ['api_server.py', 'watch.py', 'client.py', 'collate_data.py',
+                     'run_activity.py', 'interventions.py'];
+    for (const s of scripts) {
+      try { execSync(`pkill -f "${s}" 2>/dev/null || true`); } catch (_) {}
+    }
+    // Also kill ActivityWatch
+    try { execSync(`pkill -f "aw-qt" 2>/dev/null; pkill -f "aw-server" 2>/dev/null; pkill -f "aw-watcher" 2>/dev/null || true`); } catch (_) {}
+  }
+
+  // 4. Kill tracked Node child processes
+  for (const proc of runningProcesses) {
+    try { proc.kill('SIGTERM'); } catch (_) {}
+  }
+  runningProcesses = [];
+
+  // 5. Windows stop script
   if (IS_WIN && fs.existsSync(SCRIPTS.stopWin)) {
     try {
-      const { execSync } = require('child_process');
       execSync(`cmd.exe /c "${SCRIPTS.stopWin}"`, { windowsHide: true, timeout: 10000 });
     } catch (_) {}
   }
 
-  runningProcesses.forEach((proc) => {
-    try { proc.kill('SIGTERM'); } catch (_) {}
-  });
-  runningProcesses = [];
+  console.log('[cleanup] Done.');
 }
 
 // ── Read last N lines from a log file ─────────────────────────
-function readLogTail(filePath, lines = 100) {
+function readLogTail(filePath, lines = 200) {
   try {
     if (!fs.existsSync(filePath)) return `(log file not found: ${filePath})`;
     const content = fs.readFileSync(filePath, 'utf8');
@@ -206,14 +274,12 @@ app.whenReady().then(async () => {
 
   try {
     sendStatus('Starting ILGC services…', 5);
-
     sendStatus('Launching backend services…', 15);
     const scriptPromise = runStartScript();
 
     sendStatus('Waiting for backend API…', 40);
     const apiURL = IS_MAC ? API_URL_MAC : API_URL;
 
-    // Race: either the script signals ready, or we poll the API
     await Promise.race([
       scriptPromise.catch(() => {}),
       waitForURL(apiURL, 90000),
@@ -253,19 +319,16 @@ ipcMain.on('quit-app', () => {
 
 ipcMain.on('open-external', (_, url) => shell.openExternal(url));
 
-// Return list of available log files
-ipcMain.handle('get-log-names', () => {
-  return Object.keys(LOG_FILES);
-});
+ipcMain.on('open-debug', () => createDebugWindow());
 
-// Return tail of a specific log file
+ipcMain.handle('get-log-names', () => Object.keys(LOG_FILES));
+
 ipcMain.handle('get-log', (_, name) => {
   const filePath = LOG_FILES[name];
   if (!filePath) return `Unknown log: ${name}`;
   return readLogTail(filePath, 200);
 });
 
-// Return health check from API
 ipcMain.handle('get-health', async () => {
   const apiURL = IS_MAC ? API_URL_MAC : API_URL;
   return new Promise((resolve) => {

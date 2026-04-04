@@ -16,6 +16,9 @@ PYTHON="$VENV/bin/python3"
 PIP_LOG="$APP_DATA_LOG_DIR/pip_install.log"
 AW_BOOTSTRAP_LOG="$APP_DATA_LOG_DIR/activitywatch_bootstrap.log"
 
+# PID tracking file – written so Electron / stop scripts can kill everything
+PID_FILE="$APP_DATA_DIR/ilgc_pids.txt"
+
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
 CYAN='\033[0;36m'; BOLD='\033[1m'; RESET='\033[0m'
 
@@ -60,18 +63,38 @@ ensure_linked_dir() {
   ln -s "$target_path" "$link_path"
 }
 
+# ── PID management ────────────────────────────────────────────────
 declare -a PIDS
+
+register_pid() {
+  local pid="$1"
+  PIDS+=("$pid")
+  echo "$pid" >> "$PID_FILE"
+}
 
 cleanup() {
   echo ""
   log "Shutting down all services..."
+
+  # Kill every PID we started
   for pid in "${PIDS[@]}"; do
-    kill "$pid" 2>/dev/null
+    # Kill the entire process group to catch grandchildren (e.g. interventions.py)
+    kill -TERM "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true
   done
   sleep 2
   for pid in "${PIDS[@]}"; do
-    kill -9 "$pid" 2>/dev/null
+    kill -KILL "-$pid" 2>/dev/null || kill -KILL "$pid" 2>/dev/null || true
   done
+
+  # Also kill any lingering ILGC python processes by script name
+  pkill -f "api_server.py"   2>/dev/null || true
+  pkill -f "watch.py"        2>/dev/null || true
+  pkill -f "client.py"       2>/dev/null || true
+  pkill -f "collate_data.py" 2>/dev/null || true
+  pkill -f "run_activity.py" 2>/dev/null || true
+  pkill -f "interventions.py" 2>/dev/null || true
+
+  # ActivityWatch
   pkill -f "aw-qt"      2>/dev/null || true
   pkill -f "aw-server"  2>/dev/null || true
   pkill -f "aw-watcher" 2>/dev/null || true
@@ -79,6 +102,8 @@ cleanup() {
   pkill -9 -f "aw-qt"      2>/dev/null || true
   pkill -9 -f "aw-server"  2>/dev/null || true
   pkill -9 -f "aw-watcher" 2>/dev/null || true
+
+  rm -f "$PID_FILE"
   ok "All services stopped."
   exit 0
 }
@@ -89,13 +114,11 @@ echo ""
 echo "ILGC Workplace and Distraction Monitor - Mac"
 echo ""
 
-# Ensure per-user runtime directories exist (safe in packaged apps and across devices)
+# Ensure per-user runtime directories exist
 mkdir -p "$APP_SUPPORT_DIR" "$APP_LOG_DIR" "$APP_DATA_DIR" "$APP_DATA_LOG_DIR" "$SERVICE_LOG_DIR"
+> "$PID_FILE"   # reset PID file
 ok "Runtime directories ready"
 log "App support dir: $APP_SUPPORT_DIR"
-log "App logs dir: $APP_LOG_DIR"
-log "Unified data dir: $APP_DATA_DIR"
-log "Unified logs dir: $APP_DATA_LOG_DIR"
 log "Python venv dir: $VENV"
 
 # STEP 1 - Homebrew
@@ -137,11 +160,27 @@ if [ ! -f "$AW_SCRIPT" ]; then
 fi
 log "Launching ActivityWatch..."
 chmod +x "$AW_SCRIPT"
-bash "$AW_SCRIPT" >> "$AW_BOOTSTRAP_LOG" 2>&1 &
+
+# Run mac.sh in its own process group so we can kill the whole group later
+setsid bash "$AW_SCRIPT" >> "$AW_BOOTSTRAP_LOG" 2>&1 &
 AW_PID=$!
-PIDS+=("$AW_PID")
+register_pid "$AW_PID"
 ok "ActivityWatch launched (PID $AW_PID)"
-sleep 5
+
+# Give AW time to start the server before we try to connect
+log "Waiting for ActivityWatch server (port 5600)..."
+AW_WAIT=0
+while [ $AW_WAIT -lt 60 ]; do
+  if curl -s http://localhost:5600/api/0/buckets > /dev/null 2>&1; then
+    ok "ActivityWatch server ready after ${AW_WAIT}s"
+    break
+  fi
+  sleep 2
+  AW_WAIT=$((AW_WAIT + 2))
+done
+if [ $AW_WAIT -ge 60 ]; then
+  warn "ActivityWatch server did not respond within 60s, continuing anyway"
+fi
 
 # STEP 5 - Check mac/ directory
 if [ ! -d "$MAC_DIR" ]; then
@@ -151,18 +190,18 @@ fi
 
 # STEP 5.1 - Route all generated data into one folder
 log "Linking data folders to unified storage..."
-ensure_linked_dir "$MAC_DIR/details" "$APP_DATA_DIR/details"
-ensure_linked_dir "$MAC_DIR/feedback" "$APP_DATA_DIR/feedback"
+ensure_linked_dir "$MAC_DIR/details"      "$APP_DATA_DIR/details"
+ensure_linked_dir "$MAC_DIR/feedback"     "$APP_DATA_DIR/feedback"
 ensure_linked_dir "$MAC_DIR/interventions" "$APP_DATA_DIR/interventions"
-ensure_linked_dir "$MAC_DIR/collated" "$APP_DATA_DIR/collated"
-ensure_linked_dir "$MAC_DIR/logs" "$APP_DATA_DIR/logs_legacy"
-ensure_linked_dir "$MAC_DIR/screenshot" "$APP_DATA_DIR/screenshot"
+ensure_linked_dir "$MAC_DIR/collated"     "$APP_DATA_DIR/collated"
+ensure_linked_dir "$MAC_DIR/logs"         "$APP_DATA_DIR/logs_legacy"
+ensure_linked_dir "$MAC_DIR/screenshot"   "$APP_DATA_DIR/screenshot"
 
-ensure_linked_dir "$SRC_DIR/watch" "$APP_DATA_DIR/watch"
-ensure_linked_dir "$SRC_DIR/screenshot" "$APP_DATA_DIR/screenshot"
+ensure_linked_dir "$SRC_DIR/watch"           "$APP_DATA_DIR/watch"
+ensure_linked_dir "$SRC_DIR/screenshot"      "$APP_DATA_DIR/screenshot"
 ensure_linked_dir "$SRC_DIR/activityTracker" "$APP_DATA_DIR/activityTracker"
-ensure_linked_dir "$SRC_DIR/interventions" "$APP_DATA_DIR/interventions"
-ensure_linked_dir "$SRC_DIR/details" "$APP_DATA_DIR/details"
+ensure_linked_dir "$SRC_DIR/interventions"   "$APP_DATA_DIR/interventions"
+ensure_linked_dir "$SRC_DIR/details"         "$APP_DATA_DIR/details"
 ok "Unified data storage is ready"
 
 # STEP 6 - Virtual environment
@@ -172,7 +211,6 @@ if [ ! -f "$PYTHON" ]; then
   mkdir -p "$VENV"
   if ! "$PYTHON312" -m venv "$VENV"; then
     err "Failed to create virtual environment at $VENV"
-    err "Check permissions for: $APP_SUPPORT_DIR"
     exit 1
   fi
 fi
@@ -189,22 +227,15 @@ log "Checking Python dependencies..."
 if ! "$PYTHON" -c "import flask, numpy, cv2" 2>/dev/null; then
   log "Installing Python dependencies..."
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] Installing dependencies" >> "$PIP_LOG"
-  if ! "$PYTHON" -m pip install --upgrade pip >> "$PIP_LOG" 2>&1; then
-    err "Failed to upgrade pip. See: $PIP_LOG"
-    exit 1
-  fi
+  "$PYTHON" -m pip install --upgrade pip >> "$PIP_LOG" 2>&1 || true
   if ! "$PYTHON" -m pip install -r "$REQUIREMENTS" >> "$PIP_LOG" 2>&1; then
     err "Failed to install Python dependencies. See: $PIP_LOG"
     exit 1
   fi
 fi
-if ! "$PYTHON" -c "import flask, numpy, cv2" 2>/dev/null; then
-  err "Python dependencies still missing after install attempt. See: $PIP_LOG"
-  exit 1
-fi
 ok "Python dependencies ready"
 
-# Configure liblsl/pylsl before any watch imports
+# Configure liblsl/pylsl
 log "Configuring liblsl for pylsl..."
 PYLSL_BUNDLED_DIR="$MAC_DIR/lib/pylsl"
 PY_SITE_PACKAGES=$("$PYTHON" -c "import site; print(next((p for p in site.getsitepackages() if p.endswith('site-packages')), ''))" 2>/dev/null || true)
@@ -226,22 +257,17 @@ find_liblsl() {
     "/opt/homebrew/lib/liblsl.dylib" \
     "/usr/local/lib/liblsl.dylib" \
     "/opt/homebrew/opt/lsl/lib/liblsl.dylib" \
-    "/usr/local/opt/lsl/lib/liblsl.dylib" \
-    "/opt/homebrew/opt/lsl/Frameworks/lsl.framework/Versions/A/lsl" \
-    "/usr/local/opt/lsl/Frameworks/lsl.framework/Versions/A/lsl" \
-    "/opt/homebrew/Cellar/lsl/1.17.4/Frameworks/lsl.framework/Versions/A/lsl"; do
+    "/usr/local/opt/lsl/lib/liblsl.dylib"; do
     if [ -f "$candidate" ]; then
       echo "$candidate"
       return 0
     fi
   done
-
   candidate=$(find /opt/homebrew /usr/local -type f -name "liblsl*.dylib" 2>/dev/null | head -n 1)
   if [ -n "$candidate" ]; then
     echo "$candidate"
     return 0
   fi
-
   return 1
 }
 
@@ -249,7 +275,7 @@ PYLSL_LIB_PATH=""
 PYLSL_LIB_PATH="$(find_liblsl || true)"
 
 if [ -z "$PYLSL_LIB_PATH" ] && command -v brew &>/dev/null; then
-  log "liblsl not found; installing Homebrew package lsl..."
+  log "liblsl not found; installing via brew..."
   brew install labstreaminglayer/tap/lsl >> "$PIP_LOG" 2>&1 || brew install lsl >> "$PIP_LOG" 2>&1 || true
   PYLSL_LIB_PATH="$(find_liblsl || true)"
 fi
@@ -262,11 +288,7 @@ fi
 if [ -n "$PYLSL_LIB_PATH" ]; then
   export PYLSL_LIB="$PYLSL_LIB_PATH"
   LIB_DIR="$(dirname "$PYLSL_LIB_PATH")"
-  if [ -n "$DYLD_LIBRARY_PATH" ]; then
-    export DYLD_LIBRARY_PATH="$LIB_DIR:$DYLD_LIBRARY_PATH"
-  else
-    export DYLD_LIBRARY_PATH="$LIB_DIR"
-  fi
+  export DYLD_LIBRARY_PATH="${LIB_DIR}${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"
   ok "liblsl configured: $PYLSL_LIB_PATH"
 else
   warn "Could not locate liblsl.dylib; watch.py may fail to start"
@@ -274,7 +296,6 @@ fi
 
 if ! "$PYTHON" -c "import pylsl" >> "$SERVICE_LOG_DIR/watch.log" 2>&1; then
   err "pylsl import failed. See: $SERVICE_LOG_DIR/watch.log"
-  err "Expected lib location: $PYLSL_DEST_DYNAMIC"
   exit 1
 fi
 ok "pylsl import check passed"
@@ -288,37 +309,47 @@ if [ ! -d "$FRONTEND_DIR/node_modules" ]; then
 fi
 ok "Frontend dependencies ready"
 
+# ── Helper: start a service in its own process group ─────────────
+start_service() {
+  local name="$1"
+  local workdir="$2"
+  shift 2
+  local logfile="$SERVICE_LOG_DIR/${name}.log"
+
+  (
+    cd "$workdir"
+    # setsid makes this a new session leader so kill -TERM -$pgid works
+    exec setsid "$@" >> "$logfile" 2>&1
+  ) &
+  local pid=$!
+  register_pid "$pid"
+  ok "${name} started (PID $pid)"
+  echo "$pid"
+}
+
 # STEP 9 - Start Python backend services
 log "Starting watch.py first..."
-cd "$SRC_DIR"
-"$PYTHON" watch.py >> "$SERVICE_LOG_DIR/watch.log" 2>&1 &
-PID=$!; PIDS+=("$PID")
-ok "watch.py started (PID $PID)"
+watch_pid=$(start_service "watch" "$SRC_DIR" "$PYTHON" watch.py)
 sleep 2
 
-# Wait until watch has at least two non-baseline samples with stress_level
+# Wait until watch has at least two non-baseline samples
 log "Waiting for watch data readiness..."
 WATCH_READY_TIMEOUT=90
 WATCH_READY_COUNT=0
 while [ $WATCH_READY_COUNT -lt $WATCH_READY_TIMEOUT ]; do
   if "$PYTHON" - <<'PY' "$APP_DATA_DIR/watch/watch_data.json"
-import json
-import sys
-
+import json, sys
 path = sys.argv[1]
 try:
-    with open(path, "r") as f:
-        data = json.load(f)
+    with open(path) as f: data = json.load(f)
     entries = data.get("entries", []) if isinstance(data, dict) else []
-    non_baseline_count = sum(
-        isinstance(e, dict)
-        and isinstance(e.get("watch_data"), dict)
+    count = sum(
+        isinstance(e, dict) and isinstance(e.get("watch_data"), dict)
         and e["watch_data"].get("is_baseline") is False
         and "stress_level" in e["watch_data"]
         for e in entries
     )
-    ready = non_baseline_count >= 2
-    raise SystemExit(0 if ready else 1)
+    raise SystemExit(0 if count >= 2 else 1)
 except Exception:
     raise SystemExit(1)
 PY
@@ -329,29 +360,22 @@ PY
   sleep 1
   WATCH_READY_COUNT=$((WATCH_READY_COUNT + 1))
 done
-
 if [ $WATCH_READY_COUNT -ge $WATCH_READY_TIMEOUT ]; then
   warn "Watch data not ready after ${WATCH_READY_TIMEOUT}s, continuing startup"
 fi
 
 log "Starting api_server.py..."
-cd "$MAC_DIR"
-"$PYTHON" api_server.py >> "$SERVICE_LOG_DIR/api_server.log" 2>&1 &
-PID=$!; PIDS+=("$PID")
-ok "api_server.py started (PID $PID)"
+start_service "api_server" "$MAC_DIR" "$PYTHON" api_server.py > /dev/null
+
 sleep 2
 
 log "Starting client.py..."
-cd "$SRC_DIR"
-"$PYTHON" client.py >> "$SERVICE_LOG_DIR/client.log" 2>&1 &
-PID=$!; PIDS+=("$PID")
-ok "client.py started (PID $PID)"
+client_pid=$(start_service "client" "$SRC_DIR" "$PYTHON" client.py)
 sleep 1
 
-if ! kill -0 "$PID" 2>/dev/null; then
-  err "client.py exited immediately."
-  err "This usually means camera permission is missing or camera init failed."
-  err "Grant camera access, fully quit ILGC, and restart with ./start_mac.sh"
+if ! kill -0 "$client_pid" 2>/dev/null; then
+  err "client.py exited immediately – camera permission likely missing."
+  err "Grant camera access, fully quit ILGC, and restart."
   if [ -f "$SERVICE_LOG_DIR/client.log" ]; then
     echo ""
     echo "Recent client.log:"
@@ -361,27 +385,19 @@ if ! kill -0 "$PID" 2>/dev/null; then
 fi
 
 log "Starting collate_data.py..."
-cd "$SRC_DIR"
-"$PYTHON" collate_data.py >> "$SERVICE_LOG_DIR/collate_data.log" 2>&1 &
-PID=$!; PIDS+=("$PID")
-ok "collate_data.py started (PID $PID)"
+start_service "collate_data" "$SRC_DIR" "$PYTHON" collate_data.py > /dev/null
 sleep 1
 
+# run_activity.py – run from SRC_DIR so relative paths resolve correctly
 if [ -f "$UTILS_DIR/run_activity.py" ]; then
   log "Starting run_activity.py..."
-  cd "$SRC_DIR"
-  "$PYTHON" "$UTILS_DIR/run_activity.py" >> "$SERVICE_LOG_DIR/run_activity.log" 2>&1 &
-  PID=$!; PIDS+=("$PID")
-  ok "run_activity.py started (PID $PID)"
+  start_service "run_activity" "$SRC_DIR" "$PYTHON" "$UTILS_DIR/run_activity.py" > /dev/null
   sleep 1
 fi
 
 # STEP 10 - Start frontend
 log "Starting frontend (Vite)..."
-cd "$FRONTEND_DIR"
-npm run dev >> "$SERVICE_LOG_DIR/frontend.log" 2>&1 &
-PID=$!; PIDS+=("$PID")
-ok "Frontend started (PID $PID)"
+start_service "frontend" "$FRONTEND_DIR" npm run dev > /dev/null
 
 # Wait for API to be ready
 log "Waiting for API server to be ready..."
@@ -409,6 +425,7 @@ echo "Frontend      -> http://localhost:8080"
 echo "ActivityWatch -> http://localhost:5600"
 echo "Data folder   -> $APP_DATA_DIR"
 echo "Service logs  -> $SERVICE_LOG_DIR"
+echo "PID file      -> $PID_FILE"
 echo ""
 echo "Press Ctrl+C to stop everything."
 echo ""
