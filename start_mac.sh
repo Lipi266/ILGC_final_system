@@ -204,12 +204,51 @@ if ! "$PYTHON" -c "import flask, numpy, cv2" 2>/dev/null; then
 fi
 ok "Python dependencies ready"
 
-# Copy pylsl lib files if present
-PYLSL_LIB="$MAC_DIR/lib/pylsl"
-PYLSL_DEST_DYNAMIC=$("$PYTHON" -c "import pylsl, os; print(os.path.join(os.path.dirname(pylsl.__file__), 'lib'))" 2>/dev/null || true)
-if [ -d "$PYLSL_LIB" ] && [ -n "$PYLSL_DEST_DYNAMIC" ] && [ -d "$PYLSL_DEST_DYNAMIC" ]; then
-  cp -r "$PYLSL_LIB/"* "$PYLSL_DEST_DYNAMIC/" 2>/dev/null || true
+# Configure liblsl/pylsl before any watch imports
+log "Configuring liblsl for pylsl..."
+PYLSL_BUNDLED_DIR="$MAC_DIR/lib/pylsl"
+PY_SITE_PACKAGES=$("$PYTHON" -c "import site; print(next((p for p in site.getsitepackages() if p.endswith('site-packages')), ''))" 2>/dev/null || true)
+PYLSL_DEST_DYNAMIC=""
+if [ -n "$PY_SITE_PACKAGES" ]; then
+  PYLSL_DEST_DYNAMIC="$PY_SITE_PACKAGES/pylsl/lib"
+  mkdir -p "$PYLSL_DEST_DYNAMIC"
 fi
+
+if [ -d "$PYLSL_BUNDLED_DIR" ] && [ -n "$PYLSL_DEST_DYNAMIC" ]; then
+  cp -f "$PYLSL_BUNDLED_DIR"/liblsl*.dylib "$PYLSL_DEST_DYNAMIC"/ 2>/dev/null || true
+fi
+
+PYLSL_LIB_PATH=""
+for candidate in \
+  "$PYLSL_DEST_DYNAMIC/liblsl.dylib" \
+  "$PYLSL_BUNDLED_DIR/liblsl.dylib" \
+  "/opt/homebrew/lib/liblsl.dylib" \
+  "/usr/local/lib/liblsl.dylib"; do
+  if [ -f "$candidate" ]; then
+    PYLSL_LIB_PATH="$candidate"
+    break
+  fi
+done
+
+if [ -n "$PYLSL_LIB_PATH" ]; then
+  export PYLSL_LIB="$PYLSL_LIB_PATH"
+  LIB_DIR="$(dirname "$PYLSL_LIB_PATH")"
+  if [ -n "$DYLD_LIBRARY_PATH" ]; then
+    export DYLD_LIBRARY_PATH="$LIB_DIR:$DYLD_LIBRARY_PATH"
+  else
+    export DYLD_LIBRARY_PATH="$LIB_DIR"
+  fi
+  ok "liblsl configured: $PYLSL_LIB_PATH"
+else
+  warn "Could not locate liblsl.dylib; watch.py may fail to start"
+fi
+
+if ! "$PYTHON" -c "import pylsl" >> "$SERVICE_LOG_DIR/watch.log" 2>&1; then
+  err "pylsl import failed. See: $SERVICE_LOG_DIR/watch.log"
+  err "Expected lib location: $PYLSL_DEST_DYNAMIC"
+  exit 1
+fi
+ok "pylsl import check passed"
 
 # STEP 8 - Frontend dependencies
 log "Checking frontend dependencies..."
