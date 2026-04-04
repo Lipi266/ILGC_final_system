@@ -218,17 +218,46 @@ if [ -d "$PYLSL_BUNDLED_DIR" ] && [ -n "$PYLSL_DEST_DYNAMIC" ]; then
   cp -f "$PYLSL_BUNDLED_DIR"/liblsl*.dylib "$PYLSL_DEST_DYNAMIC"/ 2>/dev/null || true
 fi
 
-PYLSL_LIB_PATH=""
-for candidate in \
-  "$PYLSL_DEST_DYNAMIC/liblsl.dylib" \
-  "$PYLSL_BUNDLED_DIR/liblsl.dylib" \
-  "/opt/homebrew/lib/liblsl.dylib" \
-  "/usr/local/lib/liblsl.dylib"; do
-  if [ -f "$candidate" ]; then
-    PYLSL_LIB_PATH="$candidate"
-    break
+find_liblsl() {
+  local candidate
+  for candidate in \
+    "$PYLSL_DEST_DYNAMIC/liblsl.dylib" \
+    "$PYLSL_BUNDLED_DIR/liblsl.dylib" \
+    "/opt/homebrew/lib/liblsl.dylib" \
+    "/usr/local/lib/liblsl.dylib" \
+    "/opt/homebrew/opt/lsl/lib/liblsl.dylib" \
+    "/usr/local/opt/lsl/lib/liblsl.dylib" \
+    "/opt/homebrew/opt/lsl/Frameworks/lsl.framework/Versions/A/lsl" \
+    "/usr/local/opt/lsl/Frameworks/lsl.framework/Versions/A/lsl" \
+    "/opt/homebrew/Cellar/lsl/1.17.4/Frameworks/lsl.framework/Versions/A/lsl"; do
+    if [ -f "$candidate" ]; then
+      echo "$candidate"
+      return 0
+    fi
+  done
+
+  candidate=$(find /opt/homebrew /usr/local -type f -name "liblsl*.dylib" 2>/dev/null | head -n 1)
+  if [ -n "$candidate" ]; then
+    echo "$candidate"
+    return 0
   fi
-done
+
+  return 1
+}
+
+PYLSL_LIB_PATH=""
+PYLSL_LIB_PATH="$(find_liblsl || true)"
+
+if [ -z "$PYLSL_LIB_PATH" ] && command -v brew &>/dev/null; then
+  log "liblsl not found; installing Homebrew package lsl..."
+  brew install labstreaminglayer/tap/lsl >> "$PIP_LOG" 2>&1 || brew install lsl >> "$PIP_LOG" 2>&1 || true
+  PYLSL_LIB_PATH="$(find_liblsl || true)"
+fi
+
+if [ -n "$PYLSL_LIB_PATH" ] && [ -n "$PYLSL_DEST_DYNAMIC" ]; then
+  cp -f "$PYLSL_LIB_PATH" "$PYLSL_DEST_DYNAMIC/liblsl.dylib" 2>/dev/null || true
+  PYLSL_LIB_PATH="$PYLSL_DEST_DYNAMIC/liblsl.dylib"
+fi
 
 if [ -n "$PYLSL_LIB_PATH" ]; then
   export PYLSL_LIB="$PYLSL_LIB_PATH"
