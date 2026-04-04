@@ -5,8 +5,12 @@ MAC_DIR="$SCRIPT_DIR/mac"
 SRC_DIR="$MAC_DIR/src"
 UTILS_DIR="$SCRIPT_DIR/utils"
 FRONTEND_DIR="$MAC_DIR/frontend"
-VENV="$MAC_DIR/.ilgc"
+APP_NAME="ILGC Research"
+APP_SUPPORT_DIR="$HOME/Library/Application Support/$APP_NAME"
+APP_LOG_DIR="$HOME/Library/Logs/$APP_NAME"
+VENV="$APP_SUPPORT_DIR/venvs/mac"
 PYTHON="$VENV/bin/python3"
+PIP_LOG="$APP_LOG_DIR/pip_install.log"
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
 CYAN='\033[0;36m'; BOLD='\033[1m'; RESET='\033[0m'
@@ -44,6 +48,13 @@ trap cleanup SIGINT SIGTERM SIGHUP EXIT
 echo ""
 echo "ILGC Workplace and Distraction Monitor - Mac"
 echo ""
+
+# Ensure per-user runtime directories exist (safe in packaged apps and across devices)
+mkdir -p "$APP_SUPPORT_DIR" "$APP_LOG_DIR"
+ok "Runtime directories ready"
+log "App support dir: $APP_SUPPORT_DIR"
+log "App logs dir: $APP_LOG_DIR"
+log "Python venv dir: $VENV"
 
 # STEP 1 - Homebrew
 log "Checking Homebrew..."
@@ -100,7 +111,12 @@ fi
 log "Checking virtual environment..."
 if [ ! -f "$PYTHON" ]; then
   log "Creating .ilgc venv..."
-  "$PYTHON312" -m venv "$VENV"
+  mkdir -p "$VENV"
+  if ! "$PYTHON312" -m venv "$VENV"; then
+    err "Failed to create virtual environment at $VENV"
+    err "Check permissions for: $APP_SUPPORT_DIR"
+    exit 1
+  fi
 fi
 ok "Virtual environment ready"
 
@@ -112,10 +128,21 @@ if [ ! -f "$REQUIREMENTS" ]; then
 fi
 
 log "Checking Python dependencies..."
-if ! "$PYTHON" -c "import flask" 2>/dev/null; then
+if ! "$PYTHON" -c "import flask, numpy, cv2" 2>/dev/null; then
   log "Installing Python dependencies..."
-  "$PYTHON" -m pip install --upgrade pip --quiet
-  "$PYTHON" -m pip install -r "$REQUIREMENTS" --quiet
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] Installing dependencies" >> "$PIP_LOG"
+  if ! "$PYTHON" -m pip install --upgrade pip >> "$PIP_LOG" 2>&1; then
+    err "Failed to upgrade pip. See: $PIP_LOG"
+    exit 1
+  fi
+  if ! "$PYTHON" -m pip install -r "$REQUIREMENTS" >> "$PIP_LOG" 2>&1; then
+    err "Failed to install Python dependencies. See: $PIP_LOG"
+    exit 1
+  fi
+fi
+if ! "$PYTHON" -c "import flask, numpy, cv2" 2>/dev/null; then
+  err "Python dependencies still missing after install attempt. See: $PIP_LOG"
+  exit 1
 fi
 ok "Python dependencies ready"
 
@@ -136,19 +163,57 @@ fi
 ok "Frontend dependencies ready"
 
 # STEP 9 - Start Python backend services
+log "Starting watch.py first..."
+cd "$SRC_DIR"
+"$PYTHON" watch.py >> "$MAC_DIR/watch.log" 2>&1 &
+PID=$!; PIDS+=("$PID")
+ok "watch.py started (PID $PID)"
+sleep 2
+
+# Wait until watch has at least two non-baseline samples with stress_level
+log "Waiting for watch data readiness..."
+WATCH_READY_TIMEOUT=90
+WATCH_READY_COUNT=0
+while [ $WATCH_READY_COUNT -lt $WATCH_READY_TIMEOUT ]; do
+  if "$PYTHON" - <<'PY' "$SRC_DIR/watch/watch_data.json"
+import json
+import sys
+
+path = sys.argv[1]
+try:
+    with open(path, "r") as f:
+        data = json.load(f)
+    entries = data.get("entries", []) if isinstance(data, dict) else []
+    non_baseline_count = sum(
+        isinstance(e, dict)
+        and isinstance(e.get("watch_data"), dict)
+        and e["watch_data"].get("is_baseline") is False
+        and "stress_level" in e["watch_data"]
+        for e in entries
+    )
+    ready = non_baseline_count >= 2
+    raise SystemExit(0 if ready else 1)
+except Exception:
+    raise SystemExit(1)
+PY
+  then
+    ok "Watch data is ready"
+    break
+  fi
+  sleep 1
+  WATCH_READY_COUNT=$((WATCH_READY_COUNT + 1))
+done
+
+if [ $WATCH_READY_COUNT -ge $WATCH_READY_TIMEOUT ]; then
+  warn "Watch data not ready after ${WATCH_READY_TIMEOUT}s, continuing startup"
+fi
+
 log "Starting api_server.py..."
 cd "$MAC_DIR"
 "$PYTHON" api_server.py >> "$MAC_DIR/api_server.log" 2>&1 &
 PID=$!; PIDS+=("$PID")
 ok "api_server.py started (PID $PID)"
 sleep 2
-
-log "Starting watch.py..."
-cd "$SRC_DIR"
-"$PYTHON" watch.py >> "$MAC_DIR/watch.log" 2>&1 &
-PID=$!; PIDS+=("$PID")
-ok "watch.py started (PID $PID)"
-sleep 1
 
 log "Starting client.py..."
 cd "$SRC_DIR"
