@@ -18,6 +18,16 @@ cleanup() {
 
 trap cleanup SIGINT SIGTERM SIGHUP EXIT
 
+AW_STATE_DIR="$HOME/Library/Application Support/activitywatch"
+AW_SERVER_DIR="$AW_STATE_DIR/aw-server"
+
+# Repair broken state where aw-server exists as a file, which crashes aw-server startup.
+if [ -f "$AW_SERVER_DIR" ]; then
+  echo "Found invalid file at $AW_SERVER_DIR; moving it aside."
+  mv "$AW_SERVER_DIR" "${AW_SERVER_DIR}.backup_$(date +%Y%m%d_%H%M%S)"
+fi
+mkdir -p "$AW_SERVER_DIR"
+
 # ── Free port 5600 if anything is still holding it ────────────────
 echo "Checking port 5600..."
 PIDS=$(lsof -ti :5600 2>/dev/null || true)
@@ -84,9 +94,6 @@ fi
 
 # ── Launch ────────────────────────────────────────────────────────
 echo "Launching ActivityWatch..."
-open "/Applications/$AppName"
-sleep 3
-
 cd /Applications/ActivityWatch.app/Contents/MacOS/
 ./aw-qt &
 AW_PID=$!

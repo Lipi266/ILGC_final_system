@@ -5,6 +5,7 @@ import base64
 import time
 import os
 import json
+import sys
 from datetime import datetime
 import shutil
 
@@ -14,7 +15,7 @@ SAVE_DIR = "./screenshot"
 CAPTION_FILE = os.path.join(SAVE_DIR, "combined_captions.json")
 os.makedirs(SAVE_DIR, exist_ok=True)
 
-cap = cv2.VideoCapture(0)
+cap = None
 
 # Clear existing screenshots folder
 if os.path.exists(SAVE_DIR):
@@ -46,6 +47,7 @@ def capture_screenshot():
 
 
 def capture_webcam():
+    global cap
     if not cap.isOpened():
         return None
     ret, frame = cap.read()
@@ -81,13 +83,33 @@ def send_images():
         print("[Failed]", e)
 
 
+def initialize_camera_or_exit() -> None:
+    """Fail fast with a clear restart instruction when camera permission is missing."""
+    global cap
+    cap = cv2.VideoCapture(0)
+
+    if not cap.isOpened():
+        print("[FATAL] Camera permission is not available.")
+        print("[ACTION] Grant camera access in macOS Privacy settings, fully quit ILGC, then restart the app.")
+        sys.exit(2)
+
+    ok, _ = cap.read()
+    if not ok:
+        print("[FATAL] Camera opened but failed to read frames.")
+        print("[ACTION] Close other camera apps, then fully quit ILGC and restart.")
+        cap.release()
+        sys.exit(2)
+
+
 if __name__ == "__main__":
+    initialize_camera_or_exit()
     try:
         while True:
             send_images()
             time.sleep(10)  # capture every 10 seconds
     except KeyboardInterrupt:
-        cap.release()
+        if cap is not None:
+            cap.release()
         print("\nStopped.")
 
 # --------------------------------------------------------------------------------------------------------------

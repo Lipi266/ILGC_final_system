@@ -355,7 +355,7 @@ def health_check():
     })
 
 if __name__ == '__main__':
-    print(f"Starting Cross-Platform API server on http://localhost:5000")
+    print(f"Starting Cross-Platform API server on http://localhost:5002")
     print(f"Platform: {platform.system()} {platform.release()}")
     print(f"Python: {sys.version}")
     print(f"Python executable: {get_python_executable()}")
@@ -370,4 +370,4 @@ if __name__ == '__main__':
     print("  GET /api/get-task-details - Get current task details")
     print("  GET /api/health - Health check with platform info")
     print("\nPress Ctrl+C to stop the server")
-    app.run(debug=True, port=5002, host='0.0.0.0')
+    app.run(debug=False, use_reloader=False, port=5002, host='0.0.0.0')

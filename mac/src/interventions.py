@@ -276,12 +276,14 @@ def simplify_data_for_api(data):
 
         # Monitoring data
         for screenshot, watch in zip(screenshot_data, watch_data):
+            captions = screenshot.get("captions", {}) if isinstance(screenshot, dict) else {}
+            watch_payload = watch.get("watch_data", {}) if isinstance(watch, dict) else {}
             simplified_data.append(
                 {
-                    "screenshot_caption": screenshot["captions"]["screenshot_caption"],
-                    "webcam_caption": screenshot["captions"]["webcam_caption"],
-                    "stress_level": watch["watch_data"]["stress_level"],
-                    "interpretation": watch["watch_data"]["interpretation"],
+                    "screenshot_caption": captions.get("screenshot_caption", ""),
+                    "webcam_caption": captions.get("webcam_caption", ""),
+                    "stress_level": watch_payload.get("stress_level"),
+                    "interpretation": watch_payload.get("interpretation", ""),
                 }
             )
 

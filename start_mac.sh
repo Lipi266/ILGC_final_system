@@ -348,6 +348,18 @@ PID=$!; PIDS+=("$PID")
 ok "client.py started (PID $PID)"
 sleep 1
 
+if ! kill -0 "$PID" 2>/dev/null; then
+  err "client.py exited immediately."
+  err "This usually means camera permission is missing or camera init failed."
+  err "Grant camera access, fully quit ILGC, and restart with ./start_mac.sh"
+  if [ -f "$SERVICE_LOG_DIR/client.log" ]; then
+    echo ""
+    echo "Recent client.log:"
+    tail -n 20 "$SERVICE_LOG_DIR/client.log" || true
+  fi
+  exit 1
+fi
+
 log "Starting collate_data.py..."
 cd "$SRC_DIR"
 "$PYTHON" collate_data.py >> "$SERVICE_LOG_DIR/collate_data.log" 2>&1 &
