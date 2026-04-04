@@ -106,14 +106,29 @@ def main():
     # Clear any data from previous runs
     clear_and_init()
 
-    win_bucket = find_bucket("aw-watcher-window_")
-    afk_bucket = find_bucket("aw-watcher-afk_")
+    # Wait for watchers to be available
+    print("Waiting for ActivityWatch watchers to start...")
+    max_retries = 30
+    retry_count = 0
+    win_bucket = None
+    afk_bucket = None
+    
+    while (not win_bucket and not afk_bucket) and retry_count < max_retries:
+        win_bucket = find_bucket("aw-watcher-window_")
+        afk_bucket = find_bucket("aw-watcher-afk_")
+        if not win_bucket and not afk_bucket:
+            retry_count += 1
+            print(f"  Watchers not found yet... retrying ({retry_count}/{max_retries})")
+            time.sleep(1)
+        else:
+            break
 
     print(f"Window bucket : {win_bucket or '(not found)'}")
     print(f"AFK bucket    : {afk_bucket or '(not found)'}\n")
 
     if not win_bucket and not afk_bucket:
-        print("[error] No buckets found. Is ActivityWatch running?")
+        print("[error] No buckets found after waiting. Is ActivityWatch running?")
+        print("[error] Try restarting ActivityWatch or check permissions.")
         return
 
     chunks = []

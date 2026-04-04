@@ -98,5 +98,16 @@ cd /Applications/ActivityWatch.app/Contents/MacOS/
 ./aw-qt &
 AW_PID=$!
 
-echo "ActivityWatch running (PID $AW_PID). Press Ctrl+C to stop."
+# Wait for server to be ready
+echo "Waiting for ActivityWatch server to start..."
+sleep 3
+
+# Explicitly start watchers to ensure activity tracking works
+echo "Starting ActivityWatch watchers..."
+./aw-watcher-afk &
+sleep 1
+./aw-watcher-window &
+sleep 1
+
+echo "ActivityWatch running (PID $AW_PID). Watchers active. Press Ctrl+C to stop."
 wait $AW_PID
