@@ -152,6 +152,27 @@ if ! command -v node &>/dev/null; then
 fi
 ok "Node.js ready: $(node --version)"
 
+# STEP 3.5 - Request Accessibility permission for window tracking
+log "Checking Accessibility permissions for window tracking..."
+# Attempt to trigger the permission dialog by running a quick tccutil check
+if ! osascript -e 'tell application "System Events" to get name of every process' > /dev/null 2>&1; then
+  warn "Accessibility permission not granted."
+  warn "A permission dialog should appear. Please grant Accessibility access."
+  warn "If no dialog appears: System Settings > Privacy & Security > Accessibility"
+  warn "Add this application and enable it, then restart ILGC."
+  # Trigger the dialog
+  osascript -e 'tell application "System Events" to get name of every process' 2>/dev/null || true
+  sleep 3
+fi
+
+log "Checking Screen Recording permissions..."
+# Try to capture a tiny screenshot to trigger Screen Recording permission dialog
+if ! screencapture -x /tmp/ilgc_perm_test.png 2>/dev/null; then
+  warn "Screen Recording permission may not be granted."
+  warn "System Settings > Privacy & Security > Screen Recording — enable this app."
+fi
+rm -f /tmp/ilgc_perm_test.png
+
 # STEP 4 - ActivityWatch
 AW_SCRIPT="$UTILS_DIR/mac.sh"
 if [ ! -f "$AW_SCRIPT" ]; then

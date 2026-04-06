@@ -93,21 +93,39 @@ else
 fi
 
 # ── Launch ────────────────────────────────────────────────────────
+AW_APP_DIR="/Applications/ActivityWatch.app/Contents/MacOS"
+
 echo "Launching ActivityWatch..."
-cd /Applications/ActivityWatch.app/Contents/MacOS/
-./aw-qt &
+"$AW_APP_DIR/aw-qt" &
 AW_PID=$!
 
 # Wait for server to be ready
 echo "Waiting for ActivityWatch server to start..."
-sleep 3
+for i in $(seq 1 30); do
+  if curl -s http://localhost:5600/api/0/info > /dev/null 2>&1; then
+    echo "ActivityWatch server ready after ${i}s"
+    break
+  fi
+  sleep 1
+done
 
-# Explicitly start watchers to ensure activity tracking works
+# Explicitly start watchers with full absolute paths
+# (Required when launched from Electron DMG — relative paths fail)
 echo "Starting ActivityWatch watchers..."
-./aw-watcher-afk &
-sleep 1
-./aw-watcher-window &
-sleep 1
+"$AW_APP_DIR/aw-watcher-afk" &
+sleep 2
+"$AW_APP_DIR/aw-watcher-window" &
+sleep 2
+
+echo "Verifying watcher buckets registered..."
+for i in $(seq 1 30); do
+  BUCKETS=$(curl -s http://localhost:5600/api/0/buckets 2>/dev/null || echo "{}")
+  if echo "$BUCKETS" | grep -q "aw-watcher"; then
+    echo "Watcher buckets registered after ${i}s"
+    break
+  fi
+  sleep 1
+done
 
 echo "ActivityWatch running (PID $AW_PID). Watchers active. Press Ctrl+C to stop."
 wait $AW_PID

@@ -150,9 +150,11 @@ def main():
     print(f"AFK bucket    : {afk_bucket or '(not found)'}\n")
 
     if not win_bucket and not afk_bucket:
-        print("[warn] No watcher buckets found after waiting. Will still poll and write 'Unknown' entries.")
-        # Don't exit – keep running so collate_data has *something* to read
-
+        print("[warn] No watcher buckets found. This usually means:")
+        print("  1. aw-watcher-window/aw-watcher-afk need Accessibility + Screen Recording permissions")
+        print("  2. System Settings > Privacy & Security > Accessibility — add ActivityWatch")
+        print("  3. System Settings > Privacy & Security > Screen Recording — add ActivityWatch")
+        print("  Will continue polling but data will show 'Unknown' until permissions are granted.")
     chunks = []
 
     # State of the currently open (unfinished) chunk
