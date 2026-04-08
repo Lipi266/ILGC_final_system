@@ -21,7 +21,7 @@ trap cleanup SIGINT SIGTERM SIGHUP EXIT
 AW_STATE_DIR="$HOME/Library/Application Support/activitywatch"
 AW_SERVER_DIR="$AW_STATE_DIR/aw-server"
 
-# Repair broken state where aw-server exists as a file, which crashes aw-server startup.
+# Repair broken state where aw-server exists as a file
 if [ -f "$AW_SERVER_DIR" ]; then
   echo "Found invalid file at $AW_SERVER_DIR; moving it aside."
   mv "$AW_SERVER_DIR" "${AW_SERVER_DIR}.backup_$(date +%Y%m%d_%H%M%S)"
@@ -92,19 +92,19 @@ else
   echo "Installation complete."
 fi
 
-# ── Launch ────────────────────────────────────────────────────────
-# IMPORTANT: aw-qt already launches and manages aw-watcher-window and
-# aw-watcher-afk internally. Do NOT start them separately here — doing
-# so causes "Another instance is already running" errors and the
-# watchers that hold Accessibility permission exit immediately, leaving
-# only the permission-less duplicates running (which capture nothing).
 AW_APP_DIR="/Applications/ActivityWatch.app/Contents/MacOS"
 
+# ── Launch aw-qt ONLY — it manages all watchers internally ────────
+# DO NOT launch aw-watcher-window or aw-watcher-afk separately.
+# Doing so causes "Another instance is already running" errors, and
+# the separately-launched watchers fail because they inherit the wrong
+# process identity for Accessibility/Screen Recording permissions.
+# The watchers bundled inside aw-qt carry the correct entitlements.
 echo "Launching ActivityWatch (aw-qt manages all watchers)..."
 "$AW_APP_DIR/aw-qt" &
 AW_PID=$!
 
-# Wait for server to be ready
+# ── Wait for HTTP server to respond ───────────────────────────────
 echo "Waiting for ActivityWatch server to start..."
 for i in $(seq 1 45); do
   if curl -s http://localhost:5600/api/0/info > /dev/null 2>&1; then
@@ -114,16 +114,44 @@ for i in $(seq 1 45); do
   sleep 1
 done
 
-# Wait for watcher buckets to be registered by aw-qt's managed watchers
-echo "Waiting for watcher buckets to register..."
-for i in $(seq 1 45); do
+# ── Wait for watcher buckets (registered by aw-qt's internal watchers)
+# We do NOT start watchers ourselves — just wait for aw-qt to register them.
+echo "Verifying watcher buckets registered..."
+BUCKET_WAIT=0
+BUCKET_MAX=60
+while [ $BUCKET_WAIT -lt $BUCKET_MAX ]; do
   BUCKETS=$(curl -s http://localhost:5600/api/0/buckets 2>/dev/null || echo "{}")
-  if echo "$BUCKETS" | grep -q "aw-watcher"; then
-    echo "Watcher buckets registered after ${i}s"
+  WIN_BUCKET=$(echo "$BUCKETS" | grep -o '"aw-watcher-window[^"]*"' | head -1 | tr -d '"' || true)
+  AFK_BUCKET=$(echo "$BUCKETS" | grep -o '"aw-watcher-afk[^"]*"' | head -1 | tr -d '"' || true)
+
+  if [ -n "$WIN_BUCKET" ] && [ -n "$AFK_BUCKET" ]; then
+    echo "Watcher buckets registered after ${BUCKET_WAIT}s"
+    echo "  Window bucket : $WIN_BUCKET"
+    echo "  AFK bucket    : $AFK_BUCKET"
     break
   fi
-  sleep 1
+
+  sleep 2
+  BUCKET_WAIT=$((BUCKET_WAIT + 2))
+
+  if [ $((BUCKET_WAIT % 10)) -eq 0 ]; then
+    echo "  Still waiting for watcher buckets... (${BUCKET_WAIT}s)"
+    # Log which buckets exist so far
+    echo "$BUCKETS" | grep -o '"aw-[^"]*"' | tr -d '"' | while read -r b; do echo "    found: $b"; done
+  fi
 done
 
-echo "ActivityWatch running (PID $AW_PID). Press Ctrl+C to stop."
+if [ $BUCKET_WAIT -ge $BUCKET_MAX ]; then
+  echo "WARNING: Watcher buckets did not register within ${BUCKET_MAX}s."
+  echo "  This usually means Accessibility or Screen Recording permission"
+  echo "  has not been granted to ActivityWatch."
+  echo ""
+  echo "  To fix: Open System Settings > Privacy & Security > Accessibility"
+  echo "  and enable ActivityWatch. Then quit ILGC and reopen it."
+  echo ""
+  echo "  Continuing without confirmed window tracking..."
+else
+  echo "ActivityWatch running (PID $AW_PID). Watchers active. Press Ctrl+C to stop."
+fi
+
 wait $AW_PID

@@ -76,9 +76,7 @@ cleanup() {
   echo ""
   log "Shutting down all services..."
 
-  # Kill every PID we started
   for pid in "${PIDS[@]}"; do
-    # Kill the entire process group to catch grandchildren (e.g. interventions.py)
     kill -TERM "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true
   done
   sleep 2
@@ -86,7 +84,6 @@ cleanup() {
     kill -KILL "-$pid" 2>/dev/null || kill -KILL "$pid" 2>/dev/null || true
   done
 
-  # Also kill any lingering ILGC python processes by script name
   pkill -f "api_server.py"   2>/dev/null || true
   pkill -f "watch.py"        2>/dev/null || true
   pkill -f "client.py"       2>/dev/null || true
@@ -94,7 +91,6 @@ cleanup() {
   pkill -f "run_activity.py" 2>/dev/null || true
   pkill -f "interventions.py" 2>/dev/null || true
 
-  # ActivityWatch
   pkill -f "aw-qt"      2>/dev/null || true
   pkill -f "aw-server"  2>/dev/null || true
   pkill -f "aw-watcher" 2>/dev/null || true
@@ -114,9 +110,8 @@ echo ""
 echo "ILGC Workplace and Distraction Monitor - Mac"
 echo ""
 
-# Ensure per-user runtime directories exist
 mkdir -p "$APP_SUPPORT_DIR" "$APP_LOG_DIR" "$APP_DATA_DIR" "$APP_DATA_LOG_DIR" "$SERVICE_LOG_DIR"
-> "$PID_FILE"   # reset PID file
+> "$PID_FILE"
 ok "Runtime directories ready"
 log "App support dir: $APP_SUPPORT_DIR"
 log "Python venv dir: $VENV"
@@ -152,18 +147,18 @@ if ! command -v node &>/dev/null; then
 fi
 ok "Node.js ready: $(node --version)"
 
-# STEP 3.5 - Accessibility / Screen Recording permission guidance
-# NOTE: We do NOT call osascript here to test Accessibility because that
-# call itself re-triggers the permission dialog on every app launch even
-# when permission is already granted. Instead we just log a reminder the
-# first time the app runs. ActivityWatch's aw-watcher-window will surface
-# its own native permission request when it actually needs it.
-log "Accessibility & Screen Recording: ensure ActivityWatch is allowed in"
-log "  System Settings > Privacy & Security > Accessibility"
-log "  System Settings > Privacy & Security > Screen Recording"
-log "(No popup will appear if already granted — this is informational only)"
+# STEP 3.5 - Permission note (informational only — no osascript call)
+# We intentionally do NOT call osascript or System Events here.
+# Any such call from an unsigned/differently-signed context triggers
+# repeated Accessibility permission dialogs even when permission is
+# already granted. ActivityWatch's bundled swift binary will surface
+# its own native permission request the first time it runs.
+log "Note: ActivityWatch requires Accessibility + Screen Recording permissions."
+log "If window tracking shows 'Unknown', open System Settings >"
+log "  Privacy & Security > Accessibility and enable ActivityWatch."
+log "(No dialog will appear from this script — this is informational only.)"
 
-# STEP 3.6 - Pre-check camera permission (silent — no dialog trigger)
+# STEP 3.6 - Camera permission check (silent)
 log "Checking camera permission..."
 CAMERA_AVAILABLE=false
 if [ -f "$PYTHON" ]; then
@@ -381,7 +376,6 @@ log "Starting watch.py first..."
 watch_pid=$(start_service "watch" "$SRC_DIR" "$PYTHON" watch.py)
 sleep 2
 
-# Wait until watch has at least two non-baseline samples
 log "Waiting for watch data readiness..."
 WATCH_READY_TIMEOUT=90
 WATCH_READY_COUNT=0
@@ -423,7 +417,6 @@ log "Starting client.py..."
 client_pid=$(start_service "client" "$SRC_DIR" "$PYTHON" client.py)
 sleep 3
 
-# Check if client is still running
 if ! kill -0 "$client_pid" 2>/dev/null; then
   warn "client.py exited — camera permission is likely missing."
   warn "The rest of ILGC will continue working (screenshot capture disabled)."
@@ -437,7 +430,6 @@ log "Starting collate_data.py..."
 start_service "collate_data" "$SRC_DIR" "$PYTHON" collate_data.py > /dev/null
 sleep 1
 
-# run_activity.py – run from SRC_DIR so relative paths resolve correctly
 if [ -f "$UTILS_DIR/run_activity.py" ]; then
   log "Starting run_activity.py..."
   start_service "run_activity" "$SRC_DIR" "$PYTHON" "$UTILS_DIR/run_activity.py" > /dev/null
@@ -465,7 +457,6 @@ if [ $COUNT -ge $MAX_WAIT ]; then
   err "API server did not start within ${MAX_WAIT} seconds"
 fi
 
-# This exact string is what electron/main.js listens for
 echo "All services running"
 
 echo ""
