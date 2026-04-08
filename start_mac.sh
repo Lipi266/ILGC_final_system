@@ -152,29 +152,20 @@ if ! command -v node &>/dev/null; then
 fi
 ok "Node.js ready: $(node --version)"
 
-# STEP 3.5 - Request Accessibility permission for window tracking
-log "Checking Accessibility permissions for window tracking..."
-if ! osascript -e 'tell application "System Events" to get name of every process' > /dev/null 2>&1; then
-  warn "Accessibility permission not granted."
-  warn "A permission dialog should appear. Please grant Accessibility access."
-  warn "If no dialog appears: System Settings > Privacy & Security > Accessibility"
-  warn "Add this application and enable it, then restart ILGC."
-  osascript -e 'tell application "System Events" to get name of every process' 2>/dev/null || true
-  sleep 3
-fi
+# STEP 3.5 - Accessibility / Screen Recording permission guidance
+# NOTE: We do NOT call osascript here to test Accessibility because that
+# call itself re-triggers the permission dialog on every app launch even
+# when permission is already granted. Instead we just log a reminder the
+# first time the app runs. ActivityWatch's aw-watcher-window will surface
+# its own native permission request when it actually needs it.
+log "Accessibility & Screen Recording: ensure ActivityWatch is allowed in"
+log "  System Settings > Privacy & Security > Accessibility"
+log "  System Settings > Privacy & Security > Screen Recording"
+log "(No popup will appear if already granted — this is informational only)"
 
-log "Checking Screen Recording permissions..."
-if ! screencapture -x /tmp/ilgc_perm_test.png 2>/dev/null; then
-  warn "Screen Recording permission may not be granted."
-  warn "System Settings > Privacy & Security > Screen Recording — enable this app."
-fi
-rm -f /tmp/ilgc_perm_test.png
-
-# STEP 3.6 - Pre-check camera permission
+# STEP 3.6 - Pre-check camera permission (silent — no dialog trigger)
 log "Checking camera permission..."
 CAMERA_AVAILABLE=false
-# Try a quick OpenCV camera check via python if venv already exists,
-# otherwise just note that we'll check when client.py starts
 if [ -f "$PYTHON" ]; then
   if "$PYTHON" -c "
 import cv2, sys
@@ -186,9 +177,8 @@ sys.exit(0 if ok else 1)
     CAMERA_AVAILABLE=true
     ok "Camera is accessible"
   else
-    warn "Camera permission is not yet granted to ILGC Research."
-    warn "To fix: System Settings > Privacy & Security > Camera"
-    warn "Enable camera access for 'ILGC Research', then restart the app."
+    warn "Camera permission not yet granted to ILGC Research."
+    warn "System Settings > Privacy & Security > Camera — enable ILGC Research, then restart."
     warn "Screenshot-only mode will be used until camera is granted."
   fi
 else
@@ -204,9 +194,6 @@ fi
 log "Launching ActivityWatch..."
 chmod +x "$AW_SCRIPT"
 
-# FIX: setsid is Linux-only. On macOS use a detached subshell instead.
-# We redirect stdout/stderr to the bootstrap log and run in background
-# inside its own process group by using ( ... ) & with set -m off.
 (
   bash "$AW_SCRIPT" >> "$AW_BOOTSTRAP_LOG" 2>&1
 ) &
@@ -442,7 +429,6 @@ if ! kill -0 "$client_pid" 2>/dev/null; then
   warn "The rest of ILGC will continue working (screenshot capture disabled)."
   warn "To enable camera: System Settings > Privacy & Security > Camera"
   warn "Grant access to 'ILGC Research', then restart the app."
-  # Do NOT exit — continue with the rest of startup
 else
   ok "client.py running (camera active)"
 fi

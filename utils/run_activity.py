@@ -3,7 +3,8 @@ ActivityWatch tracker
 - Records window activity + AFK state as clean chunks
 - Only writes a new chunk when something actually changes
 - Only captures events from the moment the script starts
-- Clears the output file on each run
+- Preserves existing data across restarts; appends new session chunks
+- Timestamps in IST (UTC+5:30)
 
 python -m pip install requests (in venv)
 """
@@ -13,7 +14,7 @@ import os
 import signal
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 import requests
 
@@ -24,6 +25,25 @@ API_BASE  = "http://localhost:5600/api/0"
 DATA_DIR  = "./activityTracker"
 OUT_FILE  = os.path.join(DATA_DIR, "activity.json")
 INTERVAL  = 10   # seconds between polls
+
+# IST = UTC+5:30
+IST = timezone(timedelta(hours=5, minutes=30))
+
+
+def now_ist() -> str:
+    """Return current time as IST ISO-8601 string."""
+    return datetime.now(IST).isoformat()
+
+
+def utc_to_ist(utc_iso: str) -> str:
+    """Convert a UTC ISO string (from AW API) to IST ISO string."""
+    try:
+        # AW timestamps end in +00:00 or Z
+        ts = utc_iso.replace("Z", "+00:00")
+        dt = datetime.fromisoformat(ts)
+        return dt.astimezone(IST).isoformat()
+    except Exception:
+        return utc_iso
 
 # ──────────────────────────────────────────────────────────────────
 # Graceful shutdown
@@ -65,29 +85,41 @@ def find_bucket(prefix: str) -> str | None:
 
 
 def latest_event(bucket_id: str, start: str) -> dict | None:
-    """Fetch the most recent event that occurred after `start` (ISO timestamp)."""
-    events = _get(f"/buckets/{bucket_id}/events", {"limit": 1, "start": start})
+    """
+    Fetch the most recent event that occurred after `start`.
+    `start` must be a UTC ISO string (as returned by AW API).
+    """
+    # Convert IST session_start back to UTC for AW query params
+    try:
+        dt_ist = datetime.fromisoformat(start)
+        dt_utc = dt_ist.astimezone(timezone.utc).isoformat()
+    except Exception:
+        dt_utc = start
+
+    events = _get(f"/buckets/{bucket_id}/events", {"limit": 1, "start": dt_utc})
     return events[0] if events else None
 
 
 # ──────────────────────────────────────────────────────────────────
-# Persistence
+# Persistence — append-only; never wipes existing data
 # ──────────────────────────────────────────────────────────────────
 
-def clear_and_init():
-    """Wipe the output file and start fresh."""
-    with open(OUT_FILE, "w") as f:
-        json.dump({
-            "last_updated": datetime.now(timezone.utc).isoformat(),
-            "chunks": [],
-        }, f, indent=2)
-    print(f"Cleared {OUT_FILE}")
+def load_existing_chunks() -> list:
+    """Load chunks from a previous session if the file exists."""
+    if not os.path.exists(OUT_FILE):
+        return []
+    try:
+        with open(OUT_FILE, "r") as f:
+            data = json.load(f)
+        return data.get("chunks", [])
+    except Exception:
+        return []
 
 
 def save_chunks(chunks: list):
     with open(OUT_FILE, "w") as f:
         json.dump({
-            "last_updated": datetime.now(timezone.utc).isoformat(),
+            "last_updated": now_ist(),
             "chunks": chunks,
         }, f, indent=2)
 
@@ -97,20 +129,21 @@ def save_chunks(chunks: list):
 # ──────────────────────────────────────────────────────────────────
 
 def main():
-    # Record exactly when this session started
-    session_start = datetime.now(timezone.utc).isoformat()
+    # Record exactly when this session started (IST)
+    session_start_ist = now_ist()
 
     print("ActivityWatch tracker started. Ctrl-C to stop.")
-    print(f"Session start : {session_start}")
-    print(f"Output        → {OUT_FILE}\n")
+    print(f"Session start (IST): {session_start_ist}")
+    print(f"Output              → {OUT_FILE}\n")
 
-    # Clear any data from previous runs
-    clear_and_init()
+    # Load any previously saved chunks (don't wipe them)
+    chunks = load_existing_chunks()
+    print(f"Loaded {len(chunks)} existing chunks from previous session(s).")
 
     # ── Wait for AW server to be reachable ────────────────────────
     print("Waiting for ActivityWatch server to be reachable...")
-    server_max_wait = 120   # seconds – packaged apps take longer to boot AW
-    server_waited  = 0
+    server_max_wait = 120
+    server_waited   = 0
     while server_waited < server_max_wait:
         buckets = _get("/buckets")
         if buckets is not None:
@@ -125,10 +158,9 @@ def main():
         sys.exit(1)
 
     # ── Wait for watchers to register their buckets ───────────────
-    # In a packaged DMG the watchers can take 30-90 s to start and
-    # register buckets with the server, so we wait generously.
+    # aw-qt manages the watchers; they can take 30-90 s after launch.
     print("Waiting for window/AFK watchers to register buckets...")
-    watcher_max_wait = 180   # seconds
+    watcher_max_wait = 180
     watcher_waited   = 0
     win_bucket = None
     afk_bucket = None
@@ -150,12 +182,11 @@ def main():
     print(f"AFK bucket    : {afk_bucket or '(not found)'}\n")
 
     if not win_bucket and not afk_bucket:
-        print("[warn] No watcher buckets found. This usually means:")
-        print("  1. aw-watcher-window/aw-watcher-afk need Accessibility + Screen Recording permissions")
-        print("  2. System Settings > Privacy & Security > Accessibility — add ActivityWatch")
-        print("  3. System Settings > Privacy & Security > Screen Recording — add ActivityWatch")
-        print("  Will continue polling but data will show 'Unknown' until permissions are granted.")
-    chunks = []
+        print("[warn] No watcher buckets found. Likely causes:")
+        print("  • aw-watcher-window/afk need Accessibility + Screen Recording permissions")
+        print("  • System Settings > Privacy & Security > Accessibility — add ActivityWatch")
+        print("  • System Settings > Privacy & Security > Screen Recording — add ActivityWatch")
+        print("  Continuing — data will show 'Unknown' until permissions are granted.")
 
     # State of the currently open (unfinished) chunk
     current = {
@@ -165,31 +196,31 @@ def main():
         "afk_status": None,
     }
 
-    def close_chunk(end_ts: str):
+    def close_chunk(end_ts_ist: str):
         if current["start"] is None:
             return
         start_dt = datetime.fromisoformat(current["start"])
-        end_dt   = datetime.fromisoformat(end_ts)
+        end_dt   = datetime.fromisoformat(end_ts_ist)
         duration = round((end_dt - start_dt).total_seconds(), 1)
         if duration < 1:
             return
         chunks.append({
             "start":            current["start"],
-            "end":              end_ts,
+            "end":              end_ts_ist,
             "duration_seconds": duration,
             "app":              current["app"]        or "Unknown",
             "title":            current["title"]      or "",
             "afk_status":       current["afk_status"] or "unknown",
         })
 
-    def open_chunk(ts: str, app: str, title: str, afk: str):
-        current["start"]      = ts
+    def open_chunk(ts_ist: str, app: str, title: str, afk: str):
+        current["start"]      = ts_ist
         current["app"]        = app
         current["title"]      = title
         current["afk_status"] = afk
 
     while RUNNING:
-        now = datetime.now(timezone.utc).isoformat()
+        now_ts = now_ist()
 
         # Re-discover buckets if they appeared late
         if not win_bucket:
@@ -198,8 +229,8 @@ def main():
             afk_bucket = find_bucket("aw-watcher-afk_")
 
         # Only fetch events that happened after this script started
-        win_ev = latest_event(win_bucket, session_start) if win_bucket else None
-        afk_ev = latest_event(afk_bucket, session_start) if afk_bucket else None
+        win_ev = latest_event(win_bucket, session_start_ist) if win_bucket else None
+        afk_ev = latest_event(afk_bucket, session_start_ist) if afk_bucket else None
 
         app   = (win_ev or {}).get("data", {}).get("app",    "Unknown")
         title = (win_ev or {}).get("data", {}).get("title",  "")
@@ -212,15 +243,15 @@ def main():
         )
 
         if changed:
-            close_chunk(now)
+            close_chunk(now_ts)
             save_chunks(chunks)
-            open_chunk(now, app, title, afk)
-            print(f"[{now}]  afk={afk:9s}  {app} — {title[:70]}")
+            open_chunk(now_ts, app, title, afk)
+            print(f"[{now_ts}]  afk={afk:9s}  {app} — {title[:70]}")
 
         time.sleep(INTERVAL)
 
     # ── flush final open chunk on exit ─────────────────────────────
-    close_chunk(datetime.now(timezone.utc).isoformat())
+    close_chunk(now_ist())
     save_chunks(chunks)
     print(f"\nSaved {len(chunks)} chunks → {OUT_FILE}")
 

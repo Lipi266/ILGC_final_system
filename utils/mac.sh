@@ -93,15 +93,20 @@ else
 fi
 
 # ── Launch ────────────────────────────────────────────────────────
+# IMPORTANT: aw-qt already launches and manages aw-watcher-window and
+# aw-watcher-afk internally. Do NOT start them separately here — doing
+# so causes "Another instance is already running" errors and the
+# watchers that hold Accessibility permission exit immediately, leaving
+# only the permission-less duplicates running (which capture nothing).
 AW_APP_DIR="/Applications/ActivityWatch.app/Contents/MacOS"
 
-echo "Launching ActivityWatch..."
+echo "Launching ActivityWatch (aw-qt manages all watchers)..."
 "$AW_APP_DIR/aw-qt" &
 AW_PID=$!
 
 # Wait for server to be ready
 echo "Waiting for ActivityWatch server to start..."
-for i in $(seq 1 30); do
+for i in $(seq 1 45); do
   if curl -s http://localhost:5600/api/0/info > /dev/null 2>&1; then
     echo "ActivityWatch server ready after ${i}s"
     break
@@ -109,16 +114,9 @@ for i in $(seq 1 30); do
   sleep 1
 done
 
-# Explicitly start watchers with full absolute paths
-# (Required when launched from Electron DMG — relative paths fail)
-echo "Starting ActivityWatch watchers..."
-"$AW_APP_DIR/aw-watcher-afk" &
-sleep 2
-"$AW_APP_DIR/aw-watcher-window" &
-sleep 2
-
-echo "Verifying watcher buckets registered..."
-for i in $(seq 1 30); do
+# Wait for watcher buckets to be registered by aw-qt's managed watchers
+echo "Waiting for watcher buckets to register..."
+for i in $(seq 1 45); do
   BUCKETS=$(curl -s http://localhost:5600/api/0/buckets 2>/dev/null || echo "{}")
   if echo "$BUCKETS" | grep -q "aw-watcher"; then
     echo "Watcher buckets registered after ${i}s"
@@ -127,5 +125,5 @@ for i in $(seq 1 30); do
   sleep 1
 done
 
-echo "ActivityWatch running (PID $AW_PID). Watchers active. Press Ctrl+C to stop."
+echo "ActivityWatch running (PID $AW_PID). Press Ctrl+C to stop."
 wait $AW_PID
