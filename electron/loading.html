@@ -33,8 +33,10 @@
       background: hsl(210 100% 50% / .1);
       border-radius: 50%;
       display: flex; align-items: center; justify-content: center;
+      transition: background 0.3s;
     }
     .icon-wrap svg { width: 32px; height: 32px; }
+    .icon-wrap.calibrating { background: hsl(45 100% 50% / .12); }
 
     h1 {
       font-size: 20px;
@@ -42,6 +44,17 @@
       color: #111;
       letter-spacing: -.3px;
     }
+
+    /* Phase label shown during calibration */
+    .phase-label {
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      color: #888;
+      min-height: 16px;
+    }
+    .phase-label.calibrating { color: hsl(45 80% 38%); }
 
     .spinner {
       width: 36px; height: 36px;
@@ -51,6 +64,21 @@
       animation: spin .8s linear infinite;
     }
     @keyframes spin { to { transform: rotate(360deg); } }
+
+    .spinner.calibrating {
+      border-color: hsl(45 100% 70% / .25);
+      border-top-color: hsl(45 90% 45%);
+    }
+    .spinner.done {
+      border-color: hsl(142 71% 45%);
+      border-top-color: hsl(142 71% 45%);
+      animation: none;
+    }
+    .spinner.error {
+      border-color: #e53e3e;
+      border-top-color: #e53e3e;
+      animation: none;
+    }
 
     .progress-track {
       width: 100%;
@@ -64,7 +92,10 @@
       width: 0%;
       background: hsl(210 100% 50%);
       border-radius: 99px;
-      transition: width .4s ease;
+      transition: width .4s ease, background .3s;
+    }
+    .progress-fill.calibrating {
+      background: hsl(45 90% 50%);
     }
 
     .status {
@@ -79,12 +110,26 @@
       white-space: nowrap;
     }
 
+    /* Calibration countdown ring */
+    .calib-ring-wrap {
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+    }
+    .calib-ring-wrap.visible { display: flex; }
+
+    .calib-hint {
+      font-size: 11px;
+      color: #aaa;
+      text-align: center;
+    }
+
     .btn-row {
       display: flex;
       gap: 8px;
       -webkit-app-region: no-drag;
     }
-
     .btn {
       display: none;
       padding: 7px 20px;
@@ -94,20 +139,11 @@
       cursor: pointer;
     }
     .btn.visible { display: inline-block; }
-
-    .quit-btn {
-      color: #fff;
-      background: #e53e3e;
-    }
-    .quit-btn:hover { background: #c53030; }
-
-    .debug-btn {
-      color: #fff;
-      background: #3b82f6;
-    }
+    .quit-btn  { color: #fff; background: #e53e3e; }
+    .quit-btn:hover  { background: #c53030; }
+    .debug-btn { color: #fff; background: #3b82f6; }
     .debug-btn:hover { background: #2563eb; }
 
-    /* Always-visible small debug link */
     .debug-link {
       font-size: 11px;
       color: #bbb;
@@ -119,30 +155,33 @@
       padding: 0;
     }
     .debug-link:hover { color: #888; }
-
-    .spinner.done {
-      border-color: hsl(142 71% 45%);
-      border-top-color: hsl(142 71% 45%);
-      animation: none;
-    }
-    .spinner.error {
-      border-color: #e53e3e;
-      border-top-color: #e53e3e;
-      animation: none;
-    }
   </style>
 </head>
 <body>
   <div class="card">
-    <div class="icon-wrap">
-      <svg viewBox="0 0 24 24" fill="none" stroke="hsl(210 100% 50%)"
+
+    <!-- Icon — switches between brain (normal) and watch (calibration) -->
+    <div class="icon-wrap" id="iconWrap">
+      <!-- Brain icon (default) -->
+      <svg id="iconBrain" viewBox="0 0 24 24" fill="none" stroke="hsl(210 100% 50%)"
            stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
         <path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96-.44 2.5 2.5 0 0 1-2.96-3.08 3 3 0 0 1-.34-5.58 2.5 2.5 0 0 1 1.32-4.24 2.5 2.5 0 0 1 4.44-1.66Z"/>
         <path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96-.44 2.5 2.5 0 0 0 2.96-3.08 3 3 0 0 0 .34-5.58 2.5 2.5 0 0 0-1.32-4.24 2.5 2.5 0 0 0-4.44-1.66Z"/>
       </svg>
+      <!-- Watch icon (calibration phase) -->
+      <svg id="iconWatch" viewBox="0 0 24 24" fill="none" stroke="hsl(45 90% 45%)"
+           stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"
+           style="display:none">
+        <rect x="6" y="6" width="12" height="12" rx="2"/>
+        <path d="M9 2h6l1 4H8L9 2z"/>
+        <path d="M8 18l-1 4h10l-1-4"/>
+        <path d="M12 9v3l2 2"/>
+      </svg>
     </div>
 
     <h1>ILGC Research</h1>
+
+    <p class="phase-label" id="phaseLabel"></p>
 
     <div class="spinner" id="spinner"></div>
 
@@ -152,47 +191,92 @@
 
     <p class="status" id="statusText">Initialising…</p>
 
+    <!-- Extra hint shown only during calibration -->
+    <div class="calib-ring-wrap" id="calibHintWrap">
+      <p class="calib-hint">⌚ Keep the smartwatch on your wrist and stay still</p>
+      <p class="calib-hint" style="color:#ccc">This measures your resting heart rate baseline</p>
+    </div>
+
     <div class="btn-row">
-      <button class="btn quit-btn" id="quitBtn" onclick="window.ilgc.quit()">
-        Quit
-      </button>
-      <button class="btn debug-btn" id="debugBtnBig" onclick="openDebug()">
-        View Logs
-      </button>
+      <button class="btn quit-btn"  id="quitBtn"    onclick="window.ilgc.quit()">Quit</button>
+      <button class="btn debug-btn" id="debugBtnBig" onclick="openDebug()">View Logs</button>
     </div>
 
     <button class="debug-link" onclick="openDebug()">View service logs</button>
   </div>
 
   <script>
-    const statusEl   = document.getElementById('statusText');
-    const fillEl     = document.getElementById('progressFill');
-    const spinnerEl  = document.getElementById('spinner');
-    const quitBtn    = document.getElementById('quitBtn');
-    const debugBtnBig = document.getElementById('debugBtnBig');
+    const statusEl      = document.getElementById('statusText');
+    const fillEl        = document.getElementById('progressFill');
+    const spinnerEl     = document.getElementById('spinner');
+    const quitBtn       = document.getElementById('quitBtn');
+    const debugBtnBig   = document.getElementById('debugBtnBig');
+    const phaseLabel    = document.getElementById('phaseLabel');
+    const iconWrap      = document.getElementById('iconWrap');
+    const iconBrain     = document.getElementById('iconBrain');
+    const iconWatch     = document.getElementById('iconWatch');
+    const calibHintWrap = document.getElementById('calibHintWrap');
+
+    let currentProgress = 0;
 
     function openDebug() {
       window.ilgc.openExternal('http://localhost:5002/api/health').catch(() => {});
-      // Signal main process to open the debug window
       window.ilgc.openDebug && window.ilgc.openDebug();
+    }
+
+    function setCalibrationMode(on) {
+      if (on) {
+        iconWrap.classList.add('calibrating');
+        iconBrain.style.display = 'none';
+        iconWatch.style.display = '';
+        spinnerEl.classList.add('calibrating');
+        fillEl.classList.add('calibrating');
+        phaseLabel.textContent = 'Smartwatch Calibration';
+        phaseLabel.classList.add('calibrating');
+        calibHintWrap.classList.add('visible');
+      } else {
+        iconWrap.classList.remove('calibrating');
+        iconBrain.style.display = '';
+        iconWatch.style.display = 'none';
+        spinnerEl.classList.remove('calibrating');
+        fillEl.classList.remove('calibrating');
+        phaseLabel.textContent = '';
+        phaseLabel.classList.remove('calibrating');
+        calibHintWrap.classList.remove('visible');
+      }
     }
 
     window.ilgc.onStatus(({ message, progress }) => {
       statusEl.textContent = message;
       statusEl.title = message;
 
+      // Detect calibration phase from the message content
+      const isCalibrating = /calibrat/i.test(message) && !/complete|done/i.test(message);
+      const calibComplete  = /calibrat.*complete/i.test(message) || /calibrated/i.test(message);
+
+      if (isCalibrating) {
+        setCalibrationMode(true);
+      } else if (calibComplete || (!isCalibrating && currentProgress > 40)) {
+        setCalibrationMode(false);
+      }
+
       if (progress !== null && progress !== undefined) {
+        currentProgress = progress;
         fillEl.style.width = `${progress}%`;
       }
 
       if (message.startsWith('Error:')) {
+        spinnerEl.classList.remove('calibrating');
         spinnerEl.classList.add('error');
         quitBtn.classList.add('visible');
         debugBtnBig.classList.add('visible');
+        setCalibrationMode(false);
       }
 
       if (progress === 100) {
+        spinnerEl.classList.remove('calibrating');
         spinnerEl.classList.add('done');
+        setCalibrationMode(false);
       }
     });
   </script>

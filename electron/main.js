@@ -26,7 +26,6 @@ const FRONTEND_URL = 'http://localhost:8080';
 const API_URL      = 'http://localhost:5000/api/health'; // Windows
 const API_URL_MAC  = 'http://localhost:5002/api/health'; // Mac
 
-// PID file written by start_mac.sh so we can kill all grandchildren
 const PID_FILE = IS_MAC
   ? path.join(
       process.env.HOME,
@@ -35,7 +34,6 @@ const PID_FILE = IS_MAC
     )
   : null;
 
-// Log files written by start_mac.sh
 const LOG_FILES = IS_MAC ? {
   api_server:    path.join(process.env.HOME, 'Library', 'Application Support', 'ILGC Research', 'data', 'logs', 'services', 'api_server.log'),
   watch:         path.join(process.env.HOME, 'Library', 'Application Support', 'ILGC Research', 'data', 'logs', 'services', 'watch.log'),
@@ -139,6 +137,23 @@ function waitForURL(url, timeoutMs = 120000) {
   });
 }
 
+// ── Parse calibration progress from a script output line ──────
+// Returns a number 0-100 representing how far through the 60s
+// calibration window we are, or null if the line is not a calib line.
+function parseCalibrationProgress(line) {
+  // "Calibrating smartwatch — 45s remaining, keep watch on your wrist…"
+  const remaining = line.match(/(\d+)s remaining/);
+  if (remaining) {
+    const sLeft = parseInt(remaining[1], 10);
+    const total = 60;
+    const pct = Math.round(((total - sLeft) / total) * 35); // maps 0-60s → 5-40%
+    return Math.max(5, Math.min(40, pct + 5));
+  }
+  // "Calibrating smartwatch — finalising baseline…"
+  if (/finalising baseline/i.test(line)) return 42;
+  return null;
+}
+
 // ── Run the startup script ─────────────────────────────────────
 function runStartScript() {
   return new Promise((resolve, reject) => {
@@ -173,17 +188,49 @@ function runStartScript() {
         if (!clean) return;
         console.log(`[script] ${clean}`);
 
-        // Surface camera warning to the loading UI without blocking startup
-        if (clean.includes('camera permission') || clean.includes('Camera') || clean.includes('CAMERA')) {
-          sendStatus('⚠ Camera permission missing — grant in System Settings > Privacy > Camera', null);
-        } else {
-          sendStatus(clean, null);
+        // Calibration progress lines — show with specific progress %
+        const calibPct = parseCalibrationProgress(clean);
+        if (calibPct !== null) {
+          sendStatus(
+            clean.replace(/^Calibrating smartwatch — /, '⌚ Calibrating smartwatch — '),
+            calibPct
+          );
+          return;
         }
 
+        // Camera permission warning
+        if (/camera permission|Camera.*not.*accessible/i.test(clean)) {
+          sendStatus('⚠ Camera permission missing — grant in System Settings > Privacy > Camera', null);
+          return;
+        }
+
+        // Watch timeout warning (non-blocking)
+        if (/calibration timed out/i.test(clean)) {
+          sendStatus('⚠ Smartwatch not detected — continuing without HRV features', null);
+          return;
+        }
+
+        // Calibration complete
+        if (/calibration complete/i.test(clean)) {
+          sendStatus('⌚ Smartwatch calibrated', 45);
+          return;
+        }
+
+        // API ready
+        if (/api server ready/i.test(clean)) {
+          sendStatus('Backend API ready…', 65);
+          return;
+        }
+
+        // "All services running" — the script signals completion
         if (!resolved && clean.includes('All services running')) {
           resolved = true;
           resolve();
+          return;
         }
+
+        // Generic status update (no progress change)
+        sendStatus(clean, null);
       });
     });
 
@@ -191,7 +238,6 @@ function runStartScript() {
       const clean = data.toString().replace(/\x1b\[[0-9;]*m/g, '').trim();
       if (clean) {
         console.warn(`[script stderr] ${clean}`);
-        // Don't surface every stderr line — only meaningful warnings
         if (!clean.includes('setsid') && !clean.includes('WARNING')) {
           sendStatus(`⚠ ${clean}`, null);
         }
@@ -214,19 +260,15 @@ function runStartScript() {
 function stopAllServices() {
   console.log('[cleanup] Stopping all services...');
 
-  // 1. Ask the API to stop interventions cleanly first
   try {
     const apiURL = IS_MAC ? 'http://localhost:5002' : 'http://localhost:5000';
     http.get(`${apiURL}/api/stop-interventions`, () => {}).on('error', () => {});
   } catch (_) {}
 
-  // 2. Kill processes tracked by PID file (includes grandchildren like interventions.py)
   if (IS_MAC && PID_FILE && fs.existsSync(PID_FILE)) {
     try {
       const pids = fs.readFileSync(PID_FILE, 'utf8')
-        .split('\n')
-        .map(s => s.trim())
-        .filter(Boolean);
+        .split('\n').map(s => s.trim()).filter(Boolean);
       for (const pid of pids) {
         try { execSync(`kill -TERM -- -${pid} 2>/dev/null || kill -TERM ${pid} 2>/dev/null || true`); } catch (_) {}
       }
@@ -238,24 +280,20 @@ function stopAllServices() {
     } catch (_) {}
   }
 
-  // 3. Kill by script name to catch any stragglers
   if (IS_MAC) {
     const scripts = ['api_server.py', 'watch.py', 'client.py', 'collate_data.py',
                      'run_activity.py', 'interventions.py'];
     for (const s of scripts) {
       try { execSync(`pkill -f "${s}" 2>/dev/null || true`); } catch (_) {}
     }
-    // Also kill ActivityWatch
     try { execSync(`pkill -f "aw-qt" 2>/dev/null; pkill -f "aw-server" 2>/dev/null; pkill -f "aw-watcher" 2>/dev/null || true`); } catch (_) {}
   }
 
-  // 4. Kill tracked Node child processes
   for (const proc of runningProcesses) {
     try { proc.kill('SIGTERM'); } catch (_) {}
   }
   runningProcesses = [];
 
-  // 5. Windows stop script
   if (IS_WIN && fs.existsSync(SCRIPTS.stopWin)) {
     try {
       execSync(`cmd.exe /c "${SCRIPTS.stopWin}"`, { windowsHide: true, timeout: 10000 });
@@ -265,13 +303,11 @@ function stopAllServices() {
   console.log('[cleanup] Done.');
 }
 
-// ── Read last N lines from a log file ─────────────────────────
 function readLogTail(filePath, lines = 200) {
   try {
     if (!fs.existsSync(filePath)) return `(log file not found: ${filePath})`;
     const content = fs.readFileSync(filePath, 'utf8');
-    const all = content.split('\n');
-    return all.slice(-lines).join('\n');
+    return content.split('\n').slice(-lines).join('\n');
   } catch (e) {
     return `(error reading log: ${e.message})`;
   }
@@ -283,22 +319,29 @@ app.whenReady().then(async () => {
 
   try {
     sendStatus('Starting ILGC services…', 5);
-    sendStatus('Launching backend services…', 15);
+
+    // The startup script now handles calibration BEFORE starting the API.
+    // We wait for the "All services running" signal from the script, which
+    // means: calibration done, API up, frontend up.
+    //
+    // Timeout: calibration takes up to 120s + 30s API start + 30s frontend = 180s.
+    // We give 300s (5 min) total to be safe for slow first-run installs.
+    sendStatus('Starting smartwatch calibration…', 8);
     const scriptPromise = runStartScript();
 
-    sendStatus('Waiting for backend API…', 40);
-    const apiURL = IS_MAC ? API_URL_MAC : API_URL;
+    // Wait for the script to emit "All services running".
+    // The script itself surfaces calibration progress via stdout,
+    // so the user sees live updates in the loading screen.
+    await scriptPromise;
 
-    await Promise.race([
-      scriptPromise.catch(() => {}),
-      waitForURL(apiURL, 90000),
-    ]);
+    sendStatus('Backend ready — loading frontend…', 80);
 
-    sendStatus('Backend ready — waiting for frontend…', 70);
-    await waitForURL(FRONTEND_URL, 60000);
+    // By the time "All services running" is emitted the frontend Vite
+    // server is already starting, but may need a few more seconds.
+    await waitForURL(FRONTEND_URL, 30000);
 
-    sendStatus('Almost there…', 90);
-    await new Promise((r) => setTimeout(r, 800));
+    sendStatus('Almost there…', 95);
+    await new Promise((r) => setTimeout(r, 600));
 
     sendStatus('Done!', 100);
     createMainWindow();
@@ -327,7 +370,6 @@ ipcMain.on('quit-app', () => {
 });
 
 ipcMain.on('open-external', (_, url) => shell.openExternal(url));
-
 ipcMain.on('open-debug', () => createDebugWindow());
 
 ipcMain.handle('get-log-names', () => Object.keys(LOG_FILES));
