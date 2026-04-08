@@ -339,8 +339,7 @@ start_service() {
 
   (
     cd "$workdir"
-    # setsid makes this a new session leader so kill -TERM -$pgid works
-    exec setsid "$@" >> "$logfile" 2>&1
+    exec "$@" >> "$logfile" 2>&1
   ) &
   local pid=$!
   register_pid "$pid"
