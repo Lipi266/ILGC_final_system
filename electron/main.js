@@ -172,7 +172,13 @@ function runStartScript() {
         const clean = line.replace(/\x1b\[[0-9;]*m/g, '').trim();
         if (!clean) return;
         console.log(`[script] ${clean}`);
-        sendStatus(clean, null);
+
+        // Surface camera warning to the loading UI without blocking startup
+        if (clean.includes('camera permission') || clean.includes('Camera') || clean.includes('CAMERA')) {
+          sendStatus('⚠ Camera permission missing — grant in System Settings > Privacy > Camera', null);
+        } else {
+          sendStatus(clean, null);
+        }
 
         if (!resolved && clean.includes('All services running')) {
           resolved = true;
@@ -185,7 +191,10 @@ function runStartScript() {
       const clean = data.toString().replace(/\x1b\[[0-9;]*m/g, '').trim();
       if (clean) {
         console.warn(`[script stderr] ${clean}`);
-        sendStatus(`⚠ ${clean}`, null);
+        // Don't surface every stderr line — only meaningful warnings
+        if (!clean.includes('setsid') && !clean.includes('WARNING')) {
+          sendStatus(`⚠ ${clean}`, null);
+        }
       }
     });
 

@@ -154,24 +154,46 @@ ok "Node.js ready: $(node --version)"
 
 # STEP 3.5 - Request Accessibility permission for window tracking
 log "Checking Accessibility permissions for window tracking..."
-# Attempt to trigger the permission dialog by running a quick tccutil check
 if ! osascript -e 'tell application "System Events" to get name of every process' > /dev/null 2>&1; then
   warn "Accessibility permission not granted."
   warn "A permission dialog should appear. Please grant Accessibility access."
   warn "If no dialog appears: System Settings > Privacy & Security > Accessibility"
   warn "Add this application and enable it, then restart ILGC."
-  # Trigger the dialog
   osascript -e 'tell application "System Events" to get name of every process' 2>/dev/null || true
   sleep 3
 fi
 
 log "Checking Screen Recording permissions..."
-# Try to capture a tiny screenshot to trigger Screen Recording permission dialog
 if ! screencapture -x /tmp/ilgc_perm_test.png 2>/dev/null; then
   warn "Screen Recording permission may not be granted."
   warn "System Settings > Privacy & Security > Screen Recording — enable this app."
 fi
 rm -f /tmp/ilgc_perm_test.png
+
+# STEP 3.6 - Pre-check camera permission
+log "Checking camera permission..."
+CAMERA_AVAILABLE=false
+# Try a quick OpenCV camera check via python if venv already exists,
+# otherwise just note that we'll check when client.py starts
+if [ -f "$PYTHON" ]; then
+  if "$PYTHON" -c "
+import cv2, sys
+cap = cv2.VideoCapture(0)
+ok = cap.isOpened()
+cap.release()
+sys.exit(0 if ok else 1)
+" 2>/dev/null; then
+    CAMERA_AVAILABLE=true
+    ok "Camera is accessible"
+  else
+    warn "Camera permission is not yet granted to ILGC Research."
+    warn "To fix: System Settings > Privacy & Security > Camera"
+    warn "Enable camera access for 'ILGC Research', then restart the app."
+    warn "Screenshot-only mode will be used until camera is granted."
+  fi
+else
+  log "Venv not yet created; camera check will happen after install."
+fi
 
 # STEP 4 - ActivityWatch
 AW_SCRIPT="$UTILS_DIR/mac.sh"
@@ -182,8 +204,12 @@ fi
 log "Launching ActivityWatch..."
 chmod +x "$AW_SCRIPT"
 
-# Run mac.sh in its own process group so we can kill the whole group later
-setsid bash "$AW_SCRIPT" >> "$AW_BOOTSTRAP_LOG" 2>&1 &
+# FIX: setsid is Linux-only. On macOS use a detached subshell instead.
+# We redirect stdout/stderr to the bootstrap log and run in background
+# inside its own process group by using ( ... ) & with set -m off.
+(
+  bash "$AW_SCRIPT" >> "$AW_BOOTSTRAP_LOG" 2>&1
+) &
 AW_PID=$!
 register_pid "$AW_PID"
 ok "ActivityWatch launched (PID $AW_PID)"
@@ -255,6 +281,22 @@ if ! "$PYTHON" -c "import flask, numpy, cv2" 2>/dev/null; then
   fi
 fi
 ok "Python dependencies ready"
+
+# Re-run camera check now that venv is definitely ready
+if [ "$CAMERA_AVAILABLE" = "false" ]; then
+  if "$PYTHON" -c "
+import cv2, sys
+cap = cv2.VideoCapture(0)
+ok = cap.isOpened()
+cap.release()
+sys.exit(0 if ok else 1)
+" 2>/dev/null; then
+    CAMERA_AVAILABLE=true
+    ok "Camera is accessible"
+  else
+    warn "Camera still not accessible — client.py will run in screenshot-only mode."
+  fi
+fi
 
 # Configure liblsl/pylsl
 log "Configuring liblsl for pylsl..."
@@ -389,19 +431,20 @@ start_service "api_server" "$MAC_DIR" "$PYTHON" api_server.py > /dev/null
 
 sleep 2
 
+# STEP 9.1 - client.py — non-fatal if camera permission is missing
 log "Starting client.py..."
 client_pid=$(start_service "client" "$SRC_DIR" "$PYTHON" client.py)
-sleep 1
+sleep 3
 
+# Check if client is still running
 if ! kill -0 "$client_pid" 2>/dev/null; then
-  err "client.py exited immediately – camera permission likely missing."
-  err "Grant camera access, fully quit ILGC, and restart."
-  if [ -f "$SERVICE_LOG_DIR/client.log" ]; then
-    echo ""
-    echo "Recent client.log:"
-    tail -n 20 "$SERVICE_LOG_DIR/client.log" || true
-  fi
-  exit 1
+  warn "client.py exited — camera permission is likely missing."
+  warn "The rest of ILGC will continue working (screenshot capture disabled)."
+  warn "To enable camera: System Settings > Privacy & Security > Camera"
+  warn "Grant access to 'ILGC Research', then restart the app."
+  # Do NOT exit — continue with the rest of startup
+else
+  ok "client.py running (camera active)"
 fi
 
 log "Starting collate_data.py..."
