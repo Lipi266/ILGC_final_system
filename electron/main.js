@@ -26,22 +26,22 @@ const FRONTEND_URL = 'http://localhost:8080';
 const API_URL      = 'http://localhost:5000/api/health'; // Windows
 const API_URL_MAC  = 'http://localhost:5002/api/health'; // Mac
 
-const PID_FILE = IS_MAC
-  ? path.join(
-      process.env.HOME,
-      'Library', 'Application Support', 'ILGC Research',
-      'data', 'ilgc_pids.txt'
-    )
-  : null;
+const APP_DATA_DIR = IS_MAC
+  ? path.join(process.env.HOME, 'Library', 'Application Support', 'ILGC Research', 'data')
+  : path.join(process.env.APPDATA || '', 'ILGC Research', 'data');
 
-const LOG_FILES = IS_MAC ? {
-  api_server:    path.join(process.env.HOME, 'Library', 'Application Support', 'ILGC Research', 'data', 'logs', 'services', 'api_server.log'),
-  watch:         path.join(process.env.HOME, 'Library', 'Application Support', 'ILGC Research', 'data', 'logs', 'services', 'watch.log'),
-  client:        path.join(process.env.HOME, 'Library', 'Application Support', 'ILGC Research', 'data', 'logs', 'services', 'client.log'),
-  collate_data:  path.join(process.env.HOME, 'Library', 'Application Support', 'ILGC Research', 'data', 'logs', 'services', 'collate_data.log'),
-  run_activity:  path.join(process.env.HOME, 'Library', 'Application Support', 'ILGC Research', 'data', 'logs', 'services', 'run_activity.log'),
-  frontend:      path.join(process.env.HOME, 'Library', 'Application Support', 'ILGC Research', 'data', 'logs', 'services', 'frontend.log'),
-} : {};
+const SERVICE_LOG_DIR = path.join(APP_DATA_DIR, 'logs', 'services');
+
+const PID_FILE = IS_MAC ? path.join(APP_DATA_DIR, 'ilgc_pids.txt') : null;
+
+const LOG_FILES = {
+  api_server:   path.join(SERVICE_LOG_DIR, 'api_server.log'),
+  watch:        path.join(SERVICE_LOG_DIR, 'watch.log'),
+  client:       path.join(SERVICE_LOG_DIR, 'client.log'),
+  collate_data: path.join(SERVICE_LOG_DIR, 'collate_data.log'),
+  run_activity: path.join(SERVICE_LOG_DIR, 'run_activity.log'),
+  frontend:     path.join(SERVICE_LOG_DIR, 'frontend.log'),
+};
 
 // ── Loading window ─────────────────────────────────────────────
 function createLoadingWindow() {
