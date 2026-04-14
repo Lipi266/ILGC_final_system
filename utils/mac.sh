@@ -101,8 +101,12 @@ AW_APP_DIR="/Applications/ActivityWatch.app/Contents/MacOS"
 # process identity for Accessibility/Screen Recording permissions.
 # The watchers bundled inside aw-qt carry the correct entitlements.
 echo "Launching ActivityWatch (aw-qt manages all watchers)..."
-"$AW_APP_DIR/aw-qt" &
-AW_PID=$!
+# Launch detached via `open` so ActivityWatch runs under its own bundle
+# identity — otherwise macOS TCC attributes Accessibility/Screen Recording
+# requests to the parent (ILGC Research / Electron), causing a repeated
+# permission prompt and "unknown" window titles.
+open -gja "ActivityWatch"
+AW_PID=""
 
 # ── Wait for HTTP server to respond ───────────────────────────────
 echo "Waiting for ActivityWatch server to start..."
@@ -151,7 +155,11 @@ if [ $BUCKET_WAIT -ge $BUCKET_MAX ]; then
   echo ""
   echo "  Continuing without confirmed window tracking..."
 else
-  echo "ActivityWatch running (PID $AW_PID). Watchers active. Press Ctrl+C to stop."
+  echo "ActivityWatch running. Watchers active. Press Ctrl+C to stop."
 fi
 
-wait $AW_PID
+# Keep this script alive so the parent (start_mac.sh) treats AW as running.
+# aw-qt runs detached under its own bundle; we poll its HTTP server instead.
+while curl -s http://localhost:5600/api/0/info > /dev/null 2>&1; do
+  sleep 5
+done
